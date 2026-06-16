@@ -25,8 +25,9 @@ public final class HudLocation {
     private static LocationManager sLm;
     private static Handler sBg;
 
-    private static volatile double sLat, sLon;
+    private static volatile double sLat, sLon, sAlt = 150.0;
     private static volatile float sAcc = 5f, sBearing = 0f, sSpeed = 0f;
+    private static volatile float sVAcc = 10f, sBearAcc = 0f, sSpeedAcc = 0f;  // accuracies (0 = unset)
     private static volatile boolean sHave, sSelfTest;
     private static int sTick;
     private static double sTestLat, sTestLon;
@@ -69,10 +70,23 @@ public final class HudLocation {
         LocationManager.class.getMethod("addTestProvider", String.class, pp).invoke(lm, p, props);
     }
 
-    /** Update the fused fix delivered to MapKit via the mock providers. */
+    /** Simple update (legacy callers). */
     public static void push(double lat, double lon, Float accM, Float bearingDeg, Float speedMs) {
         sLat = lat; sLon = lon; sHave = true;
         if (accM != null) sAcc = accM; if (bearingDeg != null) sBearing = bearingDeg; if (speedMs != null) sSpeed = speedMs;
+    }
+
+    /** Rich update with the car's real altitude + per-quantity accuracies (RTK/INS-derived). null = keep. */
+    public static void pushRich(double lat, double lon, Double altM, Float accM, Float vAccM,
+                                Float bearingDeg, Float bearAccDeg, Float speedMs, Float speedAccMs) {
+        sLat = lat; sLon = lon; sHave = true;
+        if (altM != null)      sAlt = altM;
+        if (accM != null)      sAcc = accM;
+        if (vAccM != null)     sVAcc = vAccM;
+        if (bearingDeg != null) sBearing = bearingDeg;
+        if (bearAccDeg != null) sBearAcc = bearAccDeg;
+        if (speedMs != null)   sSpeed = speedMs;
+        if (speedAccMs != null) sSpeedAcc = speedAccMs;
     }
 
     private static void pushNow() {
@@ -80,8 +94,12 @@ public final class HudLocation {
         for (String p : PROVIDERS) {
             try {
                 Location l = new Location(p);
-                l.setLatitude(sLat); l.setLongitude(sLon); l.setAccuracy(sAcc);
-                l.setBearing(sBearing); l.setSpeed(sSpeed); l.setAltitude(150.0);
+                l.setLatitude(sLat); l.setLongitude(sLon); l.setAltitude(sAlt);
+                l.setAccuracy(sAcc); l.setBearing(sBearing); l.setSpeed(sSpeed);
+                // per-quantity accuracies (API 26+) so MapKit weights our high-precision fix correctly
+                try { if (sVAcc > 0)     l.setVerticalAccuracyMeters(sVAcc); } catch (Throwable t) {}
+                try { if (sBearAcc > 0)  l.setBearingAccuracyDegrees(sBearAcc); } catch (Throwable t) {}
+                try { if (sSpeedAcc > 0) l.setSpeedAccuracyMetersPerSecond(sSpeedAcc); } catch (Throwable t) {}
                 l.setTime(System.currentTimeMillis());
                 l.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
                 sLm.setTestProviderLocation(p, l);

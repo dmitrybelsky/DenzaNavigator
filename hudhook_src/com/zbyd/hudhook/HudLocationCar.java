@@ -31,12 +31,13 @@ public final class HudLocationCar {
     private static final long T_VEHICLE_POSITION = 1125942857203713L;
     private static final long T_INS             = 1125908698202113L;
     private static final long T_RTK             = 1125947152236545L;
+    private static final long T_IMU             = 1125947152236546L;   // RTK_IMU service, IMU topic (gyro/accel)
     private static final long T_LANE_LINE       = 1125951447269378L;
     // NOTE: ADASISV2 (electronic horizon) + PILOT_ALARM (NOA) were dropped — both are bound to the
     // AMap/AutoNavi CHINA HD-map and produce nothing outside China (RF), so they're not subscribed.
     // VEHICLE_POSITION lat/lon/heading/speed are hardware GNSS+INS (work in RF); its hd* lane fields
     // (f16/f18/f20) are China-HD-map and unreliable in RF — used only opportunistically.
-    private static final long[] TOPICS = { T_VEHICLE_POSITION, T_INS, T_RTK, T_LANE_LINE };
+    private static final long[] TOPICS = { T_VEHICLE_POSITION, T_INS, T_RTK, T_IMU, T_LANE_LINE };
 
     private static volatile IBinder sBinder;
     private static volatile boolean sStarted;
@@ -46,6 +47,9 @@ public final class HudLocationCar {
     private static volatile int sRtkStatus = -1;   // 4 = RTK fixed (best)
     private static volatile long sVehTs, sInsTs;
     public static volatile int sBlinker, sLaneId, sLaneNum;   // turn-signal + ego-lane (for lane confirm)
+    private static volatile double sYawRate;                   // IMU gyro Z (turn rate)
+    private static volatile double sLaneLat;                   // camera ego-lane lateral offset (m, +right)
+    private static volatile boolean sLaneApply = false;        // apply lateral correction (off until c0 calibrated)
 
     public static void start(Context c) {
         if (sStarted || c == null) return;
@@ -114,34 +118,72 @@ public final class HudLocationCar {
         if (sEvtLog++ < 12) HudLog.f("evt topic=" + topic + " len=" + payload.length);
         try {
             if (topic == T_VEHICLE_POSITION) {
-                double lon = pd(s, 3), lat = pd(s, 4), head = pd(s, 6), spd = pd(s, 9);
+                double lon = pd(s, 3), lat = pd(s, 4), alt = pd(s, 5), head = pd(s, 6), spd = pd(s, 9);
                 long laneId = pv(s, 16), laneNum = pv(s, 20); double laneOff = pd(s, 18);
                 int blinker = (int) pv(s, 31);   // indicatorLight: 0=off,1=left,2=right,3=hazard
                 sBlinker = blinker; sLaneId = (int) laneId; sLaneNum = (int) laneNum;
                 if (lat != 0 && lat == lat) { sVehTs = now();
-                    HudLocation.push(lat, lon, 1.5f, (float) head, (float) spd);
-                    if (sEvtLog < 14) HudLog.f("VEH lat=" + lat + " lon=" + lon + " head=" + head + " spd=" + spd + " lane=" + laneId + "/" + laneNum + " off=" + laneOff + " blink=" + blinker); }
+                    double[] c = applyLateral(lat, lon, head);   // camera lane-line lateral correction (RF)
+                    // fused GNSS+INS+wheel-odo+IMU output -> rich fix (real altitude + nominal accuracies)
+                    HudLocation.pushRich(c[0], c[1], alt, 1.0f, 2.0f, (float) head, 2.0f, (float) spd, 0.5f);
+                    if (sEvtLog < 14) HudLog.f("VEH lat=" + lat + " lon=" + lon + " alt=" + alt + " head=" + head + " spd=" + spd + " lane=" + laneId + "/" + laneNum + " off=" + laneOff + " blink=" + blinker); }
                 HudEvents.onCarLane(blinker, (int) laneId, (int) laneNum, laneOff);
             } else if (topic == T_RTK) {
                 sRtkStatus = (int) pv(s, 3);
-                if (sRtkStatus == 4) {   // RTK fixed = cm precision; prefer it
-                    double lat = pd(s, 7), lon = pd(s, 6), head = pd(s, 12), spd = pd(s, 15);
-                    if (lat != 0 && lat == lat) HudLocation.push(lat, lon, 0.3f, (float) head, (float) spd);
+                if (sRtkStatus == 4) {   // RTK FIXED = cm precision; prefer it with REAL accuracies
+                    double lon = pd(s, 6), lat = pd(s, 7), alt = pd(s, 8);
+                    double lonAcc = pd(s, 9), latAcc = pd(s, 10), altAcc = pd(s, 11);
+                    double headMove = pd(s, 12), headDual = pd(s, 13), headAcc = pd(s, 14);
+                    double spd = pd(s, 15), spdAcc = pd(s, 16);
+                    if (lat != 0 && lat == lat) { sVehTs = now();
+                        float horiz = (float) Math.max(0.05, Math.max(latAcc, lonAcc));
+                        // dual-antenna heading is valid even at standstill (phone GPS can't) -> use when ~stationary
+                        double head = (spd < 0.5 && headDual != 0) ? headDual : headMove;
+                        double[] c = applyLateral(lat, lon, head);
+                        HudLocation.pushRich(c[0], c[1], alt, horiz, (float) Math.max(0.1, altAcc),
+                            (float) head, (float) Math.max(0.5, headAcc), (float) spd, (float) Math.max(0.1, spdAcc));
+                        if (sEvtLog < 14) HudLog.f("RTK FIX lat=" + lat + " alt=" + alt + " acc=" + horiz + " headDual=" + headDual + " spd=" + spd); }
                 }
+            } else if (topic == T_IMU) {
+                double yawRate = pd(s, 5);   // angularVelocityZ (rad/s or deg/s) — turn-rate
+                sYawRate = yawRate;
+                if (sEvtLog < 14 && Math.abs(yawRate) > 0.05) HudLog.f("IMU yawRate=" + yawRate);
             } else if (topic == T_INS) {
-                // dead-reckoning fallback when GNSS jammed (no fresh VEH/RTK in last ~2s)
-                if (now() - sVehTs > 2000) {
+                if (now() - sVehTs > 2000) {   // GNSS jammed -> INS dead-reckoning (wheel-odo + IMU fused)
                     double lat = pd(s, 7), lon = pd(s, 8), head = pd(s, 15), spd = pd(s, 25);
                     if (lat != 0 && lat == lat) { sInsTs = now();
-                        HudLocation.push(lat, lon, 5f, (float) head, (float) spd);
-                        if (sEvtLog < 14) HudLog.f("INS(DR) lat=" + lat + " lon=" + lon); }
+                        HudLocation.pushRich(lat, lon, null, 5f, null, (float) head, 5f, (float) spd, 1f);
+                        if (sEvtLog < 14) HudLog.f("INS(DR) lat=" + lat + " lon=" + lon + " head=" + head); }
                 }
+            } else if (topic == T_LANE_LINE) {
+                // camera lane-line perception (works in RF). Extract ego lateral offset from the left/right
+                // marking c0 distances. Line sub-message field layout is calibrated on car (log raw first).
+                sLaneLat = parseLaneLateral(s);
+                if (sEvtLog < 16) HudLog.f("LANE len=" + s.length + " egoLateral=" + sLaneLat + " (calibrate Line.c0 field on car)");
             }
-            // T_LANE_LINE: ego-lane geometry (camera perception — works in RF), folded into VEH for now
         } catch (Throwable t) { HudLog.f("parse topic=" + topic + " fail: " + t); }
     }
 
     private static long now() { return android.os.SystemClock.elapsedRealtime(); }
+
+    /** shift the fix laterally by the camera ego-lane offset (perpendicular to heading) for lane-level lateral
+     *  precision. Bounded + gated (sLaneApply) — off until the Line.c0 field is calibrated on the car. */
+    private static double[] applyLateral(double lat, double lon, double headDeg) {
+        if (!sLaneApply || sLaneLat == 0 || Math.abs(sLaneLat) > 2.0) return new double[]{lat, lon};
+        double perp = Math.toRadians(headDeg + 90.0);   // +right of travel
+        double north = sLaneLat * Math.cos(perp), east = sLaneLat * Math.sin(perp);
+        double dLat = north / 111320.0;
+        double dLon = east / (111320.0 * Math.cos(Math.toRadians(lat)));
+        return new double[]{lat + dLat, lon + dLon};
+    }
+
+    /** ego-lane lateral offset from the camera lane-line struct (perception, RF-valid). Line sub-message
+     *  c0 (distance-to-marking) field number varies — returns 0 until calibrated on car (raw logged above). */
+    private static double parseLaneLateral(byte[] s) {
+        // framework: LaneLineDataNotifyStruct f3 = repeated Line; ego lateral = (leftLine.c0 + rightLine.c0)/2.
+        // Without the confirmed Line.c0 field tag this stays 0 (sLaneApply off); calibrate from the LANE raw log.
+        return 0.0;
+    }
 
     // ---- BYDAuto HAL (speed/gear) via reflection — sanity + DR gating ----
     private static void startHal() {
