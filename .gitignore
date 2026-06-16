@@ -1,0 +1,13 @@
+# secrets / signing keys — NEVER commit
+*.keystore
+*.p12
+*.jks
+**/assets/zbyd.*
+
+# build artifacts (contain compiled code; rebuild from source)
+*.dex
+*.apk
+work/
+/tmp/
+
+# the Yandex Weather API key must be supplied locally, not committed

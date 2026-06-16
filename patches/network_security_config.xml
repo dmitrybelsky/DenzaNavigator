@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Standard patch: block analytics/ads/crash telemetry by trusting NO CA for these
+     domains. TLS handshake to them fails => no payload is ever sent, regardless of how
+     the URL is built (code or native). Base config keeps system CAs for everything else. -->
+<network-security-config>
+    <base-config>
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <domain-config>
+        <domain includeSubdomains="true">crashlytics.com</domain>
+        <domain includeSubdomains="true">facebook.com</domain>
+        <domain includeSubdomains="true">appmetrica.yandex.net</domain>
+        <domain includeSubdomains="true">banners.mobile.yandex.net</domain>
+        <domain includeSubdomains="true">banners.tst.mobile.yandex.net</domain>
+        <domain includeSubdomains="true">s3.eu-central-1.amazonaws.com</domain>
+        <!-- ad serving / exchange (kill ad loading at TLS) -->
+        <domain includeSubdomains="true">an.yandex.ru</domain>
+        <domain includeSubdomains="true">yabs.yandex.ru</domain>
+        <domain includeSubdomains="true">yabs.yandex.net</domain>
+        <domain includeSubdomains="true">adfox.ru</domain>
+        <domain includeSubdomains="true">adfox.net</domain>
+        <domain includeSubdomains="true">adsdk.yandex.ru</domain>
+        <domain includeSubdomains="true">mobile.yandexadexchange.net</domain>
+        <domain includeSubdomains="true">yandexadexchange.net</domain>
+        <trust-anchors/>
+    </domain-config>
+</network-security-config>
