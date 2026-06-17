@@ -13,6 +13,57 @@ Non-root интеграция Яндекс.Навигатора с BYD/Denza N9 
 
 ---
 
+## 🔓 Runtime-управление из Яндекса (N9, валидировано E2E)
+
+Непривилегированный пересобранный Яндекс (`untrusted_app`) НЕ может актуировать кузов напрямую:
+signature-perm `BYDAUTO_*_SET` проверяется по uid вызывающего во ВСЕХ каналах (autoservice native,
+car.server `CarProperty.setProperties` → `checkCallingPermission`). Поэтому — делегирование
+привилегированному процессу + кросс-доменный канал. Цепочка (вся live-подтверждена, физически
+двигает шторки):
+
+```
+Яндекс (untrusted_app)
+  └─ пишет команду в /sdcard/zbyd/cmd  (файл-мост)
+        ▼
+  HudPrivAgent в com.byd.cameraautostudy (platform_app, держит BODYWORK/INSTRUMENT/SETTING_SET)
+        └─ исполняет BYDAuto*Device.<method>() своим uid → актуация + reply в /sdcard/zbyd/reply
+```
+
+**Почему так, а не иначе** (всё проверено на N9):
+- abstract-socket `untrusted_app → platform_app`: SELinux **запрещает** `connectto` (probe подтвердил
+  `Permission denied`). run-as демон тоже мёртв (домен `runas_app`, MLS-категория c62 ≠ c139 Яндекса).
+- **файл-мост через /sdcard работает**: `/sdcard` = `mlstrustedobject` (MLS не применяется), обе
+  стороны держат `MANAGE_EXTERNAL_STORAGE`. `/Android/data/` НЕ годится (Android 11 режет даже для MANAGE).
+
+### Инжект агента (надёжный)
+`jdwp_inject.py` грузит `HudPrivAgent.dex` в живой cameraautostudy через JDWP:
+- poke = config-change (`cmd uimode night yes/no`) → `Handler.dispatchMessage` на main-потоке (надёжно).
+- загрузка через **`InMemoryDexClassLoader`** из байтов, прочитанных из `/data/local/tmp/...dex`
+  (`shell_data_file`, platform_app читает; обходит W^X-блок «writable dex» Android 11+).
+
+```bash
+adb push HudPrivAgent.dex /data/local/tmp/ && adb shell chmod 644 /data/local/tmp/HudPrivAgent.dex
+python3 jdwp_inject.py 192.168.1.67:5555 com.byd.cameraautostudy /data/local/tmp/HudPrivAgent.dex
+# one-time grants (персистят):
+adb shell appops set com.byd.cameraautostudy MANAGE_EXTERNAL_STORAGE allow
+adb shell appops set ru.yandex.yandexnavi    MANAGE_EXTERNAL_STORAGE allow
+```
+
+### Команды через файл-мост (`/sdcard/zbyd/cmd` → reply `/sdcard/zbyd/reply`)
+| Команда | Действие |
+|---|---|
+| `BODY <method> [intargs]` | BYDAutoBodyworkDevice.<method> (`setSunshadeState 0..100`, `setHetchDoorStatus 1/2`, `setBodyWindowCtrlState <win> <act>`, `getMoonRoofConfig`…) |
+| `BODYFID <fid> <val>` | raw fid на bodywork (dev 1001) — напр. задняя шторка `1276178472` |
+| `SETTING <method> [intargs]` | BYDAutoSettingDevice (`setSeatHeatingState`, `setSteeringWheelHeatingState`…) |
+| `FIDSET <fid> <val>` | raw fid на instrument (dev 1007) — HUD-кластер поля |
+| `CLUSTER <turn> <dist> [road]` | нав-инфо на приборку |
+
+```bash
+echo 'BODY setSunshadeState 100' > /sdcard/zbyd/cmd   # -> reply: BODY setSunshadeState [100] ret=0  (шторка открылась)
+```
+
+---
+
 ## ⚙️ Не-root запись в железо (N9, валидировано)
 
 N9 не рутован, Яндекс пересобран. Запись в авто-железо обходит signature-стену так:

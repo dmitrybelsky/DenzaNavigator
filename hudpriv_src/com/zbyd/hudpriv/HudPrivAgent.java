@@ -53,6 +53,8 @@ public final class HudPrivAgent {
                 .getMethod("currentApplication").invoke(null);
         resolveInstr();
         boolean mapOn = writeFidOn(instr, FID_HUD_NAVIGATION_MAP_SET, 1);  // enable HUD nav-map panel on startup
+        Thread fb = new Thread(new Runnable() { @Override public void run() { fileBridge(); } }, "zbyd-filebridge");
+        fb.setDaemon(true); fb.start();                                    // /sdcard channel for untrusted_app (Yandex)
         LocalServerSocket srv = new LocalServerSocket(SOCK);
         log("listening on @" + SOCK + " uid=" + android.os.Process.myUid() + " instr=" + (instr != null) + " hudMap=" + mapOn);
         while (true) {
@@ -178,7 +180,33 @@ public final class HudPrivAgent {
     }
 
     private static int sLogN;
-    private static void logN(String m) { if (sLogN++ < 40) log(m); }
+    static volatile String lastReply = "OK";
+    private static void logN(String m) { lastReply = m; if (sLogN++ < 40) log(m); }
+
+    /** Run one command line and return its reply (captured from logN). Used by the /sdcard file bridge. */
+    private static String runAndReply(String line) { lastReply = "OK"; dispatch(line); return lastReply; }
+
+    /** Cross-domain command channel for the re-signed Yandex (untrusted_app): the agent's abstract socket is
+     *  SELinux-unreachable from untrusted_app, but /sdcard (mlstrustedobject, MLS-exempt) is shared and this
+     *  app holds MANAGE_EXTERNAL_STORAGE. Yandex atomically renames cmd.tmp->cmd; we exec + write reply. */
+    private static void fileBridge() {
+        java.io.File dir = new java.io.File("/sdcard/zbyd");
+        try { dir.mkdirs(); } catch (Throwable e) {}
+        java.io.File cmd = new java.io.File(dir, "cmd"), rep = new java.io.File(dir, "reply"), repTmp = new java.io.File(dir, "reply.tmp");
+        log("fileBridge start dir=" + dir + " writable=" + dir.canWrite());
+        while (true) {
+            try {
+                if (cmd.exists()) {
+                    String line = new BufferedReader(new InputStreamReader(new java.io.FileInputStream(cmd))).readLine();
+                    cmd.delete();
+                    String reply = line != null ? runAndReply(line.trim()) : "ERR empty";
+                    FileWriter w = new FileWriter(repTmp); w.write(reply + "\n"); w.close();
+                    repTmp.renameTo(rep);                         // atomic publish
+                }
+                Thread.sleep(250);
+            } catch (Throwable e) { log("fileBridge: " + e); try { Thread.sleep(1000); } catch (Throwable e2) {} }
+        }
+    }
 
     private static void log(String m) {
         try {

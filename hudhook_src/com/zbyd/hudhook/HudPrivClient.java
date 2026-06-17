@@ -1,51 +1,42 @@
 package com.zbyd.hudhook;
 
-import android.net.LocalSocket;
-import android.net.LocalSocketAddress;
-
-import java.io.OutputStream;
+import java.io.File;
+import java.io.FileWriter;
 
 /**
- * Client to the privileged HUD agent (HudPrivAgent), injected via JDWP into a debuggable BYD app that
- * holds BYDAUTO_INSTRUMENT_SET / BYDAUTO_SETTING_SET. The re-signed Yandex can't write the cluster
- * itself (signature perm), so it streams nav commands over the abstract LocalSocket "zbyd_hud_priv";
- * the agent replays them with the privileged UID. No-op (silent) when the agent isn't present
- * (e.g. phone, or before injection) — connect() back-offs to avoid spam.
+ * Client to the privileged HUD agent (HudPrivAgent), injected via JDWP into com.byd.cameraautostudy
+ * (platform_app; holds BYDAUTO_INSTRUMENT_SET / BODYWORK_SET / SETTING_SET). The re-signed Yandex
+ * (untrusted_app) can't write the cluster/body itself (signature perm) AND can't reach the agent's
+ * abstract socket (SELinux denies untrusted_app -> platform_app connectto). So commands cross the
+ * domain barrier via a /sdcard FILE BRIDGE: /sdcard is mlstrustedobject (MLS-exempt) and both sides
+ * hold MANAGE_EXTERNAL_STORAGE (granted once via `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow`).
+ * We atomically publish each command (tmp -> rename); the agent polls, executes with its UID, replies.
+ * No-op when the bridge dir isn't writable (phone, or before grant).
  */
 public final class HudPrivClient {
 
-    private static final String SOCK = "zbyd_hud_priv";
-    private static volatile LocalSocket sSock;
-    private static volatile OutputStream sOut;
-    private static long sLastTry;
+    private static final File DIR = new File("/sdcard/zbyd");
+    private static final File CMD = new File(DIR, "cmd");
+    private static final File CMD_TMP = new File(DIR, "cmd.tmp");
+    private static volatile boolean sReady, sChecked;
     private static int sLog;
 
-    private static synchronized boolean connect() {
-        if (sOut != null) return true;
-        long now = System.currentTimeMillis();
-        if (now - sLastTry < 3000) return false;                 // back-off when agent absent
-        sLastTry = now;
-        try {
-            LocalSocket s = new LocalSocket();
-            s.connect(new LocalSocketAddress(SOCK, LocalSocketAddress.Namespace.ABSTRACT));
-            sSock = s; sOut = s.getOutputStream();
-            HudLog.f("HudPrivClient connected @" + SOCK);
-            return true;
-        } catch (Throwable t) {
-            if (sLog++ < 3) HudLog.f("HudPrivClient no agent (@" + SOCK + "): " + t);
-            return false;
-        }
+    private static synchronized boolean ready() {
+        if (sChecked) return sReady;
+        sChecked = true;
+        try { DIR.mkdirs(); sReady = DIR.canWrite() || DIR.exists(); }
+        catch (Throwable t) { sReady = false; }
+        HudLog.f("HudPrivClient bridge " + DIR + " ready=" + sReady);
+        return sReady;
     }
 
-    private static void send(String line) {
-        if (!connect()) return;
+    private static synchronized void send(String line) {
+        if (!ready()) return;
         try {
-            sOut.write((line + "\n").getBytes("UTF-8"));
-            sOut.flush();
+            FileWriter w = new FileWriter(CMD_TMP); w.write(line + "\n"); w.close();
+            CMD_TMP.renameTo(CMD);                                // atomic publish; agent polls + executes
         } catch (Throwable t) {
-            sOut = null;
-            try { sSock.close(); } catch (Throwable e) {}
-            sSock = null;
+            if (sLog++ < 3) HudLog.f("HudPrivClient bridge write fail: " + t);
         }
     }
 
