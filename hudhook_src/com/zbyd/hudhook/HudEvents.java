@@ -33,7 +33,7 @@ public final class HudEvents {
         sGuidance = obj;
         try { HudParking.setGuidance(obj); } catch (Throwable t) {}   // one hook starts both
         // reverse channel: car SOME/IP+HAL fused position -> mock location -> Yandex (jam-resistant, lane)
-        try { Context c = ctx(); if (c != null) { HudLocation.install(); HudLocationCar.start(c); HudSensors.start(c); } } catch (Throwable t) {}
+        try { Context c = ctx(); if (c != null) { HudLocation.install(); HudLocationCar.start(c); HudSensors.start(c); HudCarClient.start(c); HudAutomation.init(c); HudAutomation.onRouteStart(); } } catch (Throwable t) {}
         if (sHandler == null) {
             try {
                 sHandler = new Handler(Looper.getMainLooper());
@@ -108,11 +108,32 @@ public final class HudEvents {
         if (kind == 0) {
             double[] end = segLatLon(route, bestSeg + 1);
             HudSomeIp.pushTunnel(c, dist, ll[0], ll[1], end[0], end[1]);
+            try { HudAutomation.onTunnel(dist, dist >= 0 && dist < 40); } catch (Throwable t) {}   // entering tunnel
         } else {
             HudSomeIp.pushLight(c, ll[0], ll[1], dist);
             // light within ~300 m → enable the OCR countdown bridge (else idle)
             try { HudTlOcr.setLightAhead(dist > 0 && dist < 300); } catch (Throwable t) {}
         }
+    }
+
+    /** Forward route polyline from the current segment as a HUD AR guideLine "[[lon,lat,0],...]"
+     *  (up to ~20 geometry points ≈ the road ahead) — drives the windshield AR arrows along the
+     *  REAL Yandex route, not a synthetic stub. */
+    private static String forwardGuideLine(Object route, int curSeg) {
+        Object pts = call(call(route, "getGeometry"), "getPoints");
+        if (!(pts instanceof List)) return null;
+        List<?> g = (List<?>) pts; int n = g.size();
+        if (curSeg < 0) curSeg = 0;
+        int end = Math.min(n, curSeg + 20);
+        if (end - curSeg < 2) return null;
+        StringBuilder b = new StringBuilder("[");
+        for (int i = curSeg; i < end; i++) {
+            Object p = g.get(i);
+            double lat = asDbl(call(p, "getLatitude")), lon = asDbl(call(p, "getLongitude"));
+            b.append("[").append(lon).append(",").append(lat).append(",0]");
+            if (i < end - 1) b.append(",");
+        }
+        return b.append("]").toString();
     }
 
     /** lat/lon of route geometry point at segment index. */
@@ -126,6 +147,103 @@ public final class HudEvents {
             }
         }
         return new double[]{ 0, 0 };
+    }
+
+    /** True while NaviKit guidance is active (a route is set) — gates the map-capture push. */
+    public static boolean guidanceActive() { return sGuidance != null; }
+
+    // current road speed limit (km/h) — fed by the SpeedLimitView.setSpeedLimit hook, sent to HUD f11/f15
+    private static volatile int sSpeedLimit;
+    public static void onSpeedLimit(String s) {
+        try {
+            if (s == null) { sSpeedLimit = 0; return; }
+            String d = s.replaceAll("[^0-9]", "");
+            sSpeedLimit = d.isEmpty() ? 0 : Integer.parseInt(d);
+        } catch (Throwable t) { sSpeedLimit = 0; }
+    }
+
+    // Yandex AnnotationLanes -> HUD f29 "back,front|" per lane (+count). front=back on the recommended
+    // (highlighted) lane else 0 — the format the BYD HUD lane bars consume (reference PlatformHudImpl).
+    private static String buildLanes(Object ann, int[] countOut) {
+        try {
+            Object al = call(ann, "getAnnotationLanes");
+            Object lanes = al == null ? null : call(al, "getLanes");
+            if (!(lanes instanceof List)) return "";
+            List<?> ls = (List<?>) lanes;
+            if (ls.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            for (Object lane : ls) {
+                Object hi = call(lane, "getHighlightedDirection");
+                boolean active = hi != null;
+                int code;
+                if (active) code = laneCode(hi);
+                else {
+                    Object dirs = call(lane, "getDirections");
+                    Object d0 = (dirs instanceof List && !((List<?>) dirs).isEmpty()) ? ((List<?>) dirs).get(0) : null;
+                    code = laneCode(d0);
+                }
+                sb.append(code).append(",").append(active ? code : 0).append("|");
+            }
+            countOut[0] = ls.size();
+            return sb.toString();
+        } catch (Throwable t) { return ""; }
+    }
+
+    /** Yandex LaneDirection enum name -> reference autonavi lane code: 0=straight, 1=left, 3=right. */
+    private static int laneCode(Object dir) {
+        if (dir == null) return 0;
+        String n = (dir instanceof Enum ? ((Enum<?>) dir).name() : String.valueOf(dir)).toUpperCase();
+        if (n.startsWith("LEFT")) return 1;
+        if (n.startsWith("RIGHT")) return 3;
+        return 0;   // STRAIGHT_AHEAD / UNKNOWN_DIRECTION
+    }
+
+    /** ETA = [remainingSeconds, arrivalEpochMs]; remaining time ≈ total route time * remDist/totalDist. */
+    private static long[] computeEta(Object route, int curSeg) {
+        try {
+            Object w = call(call(route, "getMetadata"), "getWeight");
+            double totalSec = asDbl(call(call(w, "getTimeWithTraffic"), "getValue"));
+            double totalDist = asDbl(call(call(w, "getDistance"), "getValue"));
+            if (totalSec <= 0 || totalDist <= 0) return new long[]{0, 0};
+            int remDist = remainingMeters(route, curSeg);
+            double frac = Math.min(1.0, remDist / totalDist);
+            long remSec = (long) (totalSec * frac);
+            return new long[]{ remSec, System.currentTimeMillis() + remSec * 1000L };
+        } catch (Throwable t) { return new long[]{0, 0}; }
+    }
+
+    /** Meters from current segment to route end (haversine over geometry). */
+    private static int remainingMeters(Object route, int curSeg) {
+        Object pts = call(call(route, "getGeometry"), "getPoints");
+        if (!(pts instanceof List)) return 0;
+        List<?> g = (List<?>) pts; int n = g.size();
+        if (curSeg < 0) curSeg = 0;
+        double m = 0;
+        for (int i = curSeg; i + 1 < n; i++)
+            m += haversine(asDbl(call(g.get(i), "getLatitude")), asDbl(call(g.get(i), "getLongitude")),
+                           asDbl(call(g.get(i + 1), "getLatitude")), asDbl(call(g.get(i + 1), "getLongitude")));
+        return (int) m;
+    }
+
+    // Push remaining time/distance to the cluster's native NAVI fields (via the privileged agent).
+    // FIDs: ESTIMATED_TIME 0x4C212010 (min), ESTIMATED_MILEAGE 0x4C212020 (km); TRIP hour/min/mileage.
+    private static int sClusterTick;
+    private static void sendClusterNav(int remainSec, int remainM) {
+        if (remainSec <= 0) return;
+        if ((sClusterTick++ & 1) != 0) return;                 // ~every other poll (~2s)
+        int min = remainSec / 60, km = (remainM + 500) / 1000;
+        HudPrivClient.fidSet("0x4C212010", min);               // NAVI_ESTIMATED_TIME (minutes)
+        HudPrivClient.fidSet("0x4C212020", km);                // NAVI_ESTIMATED_MILEAGE (km)
+        HudPrivClient.fidSet("0x43F02010", remainSec / 3600);  // NAVI_TRIP_INFO_HOUR
+        HudPrivClient.fidSet("0x43F02018", min % 60);          // NAVI_TRIP_INFO_MINUTE
+        HudPrivClient.fidSet("0x43F02028", km);                // NAVI_TRIP_INFO_MILEAGE
+    }
+
+    private static String clock(long epochMs) {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(epochMs);
+        return String.format(java.util.Locale.US, "%02d:%02d",
+                cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE));
     }
 
     // --- road incidents (accident/roadworks) + cameras (-> cluster instrument HAL) --------
@@ -195,8 +313,20 @@ public final class HudEvents {
             String road = str(call(ann, "getToponym"));
             int dist = distMeters(route, curSeg, secSeg < 0 ? curSeg : secSeg);
             if (sPollLog <= 3) HudLog.f("MANEUVER action=" + name + " icon=" + icon + " road=" + road + " dist=" + dist);
-            // hudbench-in-yandex: publish the windshield HUD frame (665) directly via SOME/IP
-            HudSomeIp.pushHud(c, road, dist, "", icon);
+            // hudbench-in-yandex: publish the windshield HUD frame (665) directly via SOME/IP —
+            // real live position + the actual Yandex route polyline ahead (AR arrows on the road).
+            double[] here = segLatLon(route, curSeg < 0 ? 0 : curSeg);
+            String gl = forwardGuideLine(route, curSeg < 0 ? 0 : curSeg);
+            int[] laneCount = new int[1];
+            String laneStr = buildLanes(ann, laneCount);                  // f5/f29 lane guidance
+            long[] etaOut = computeEta(route, curSeg);                    // [remainSec, arrivalEpochMs]
+            String etaClock = etaOut[0] > 0 ? clock(etaOut[1]) : "";      // f26 arrival HH:MM
+            int rng = (int) HudCarClient.rangeKm();                       // EV range -> append to ETA slot (repurpose test)
+            if (rng > 0 && etaClock.length() > 0) etaClock = etaClock + " " + rng + "km";
+            HudSomeIp.pushHud(c, road, dist, etaClock, icon, here[0], here[1], gl,
+                              (int) etaOut[0], laneStr, laneCount[0], sSpeedLimit);
+            sendClusterNav((int) etaOut[0], remainingMeters(route, curSeg < 0 ? 0 : curSeg));
+            try { HudAutomation.onManeuver(icon, dist); HudAutomation.onRouteProgress(remainingMeters(route, curSeg < 0 ? 0 : curSeg)); } catch (Throwable t) {}
             // TIER-1: also feed the CLUSTER via the instrument HAL (bypasses launchermap owner-gate)
             try { HudInstrumentHal.pushManeuver(icon, road, dist); } catch (Throwable t) {}
             try { HudTts.maneuver(c, icon, dist, road); } catch (Throwable t) {}   // native-voice prompt (opt-in)
@@ -283,36 +413,6 @@ public final class HudEvents {
         if (left) return 2;
         if (right) return 3;
         return 9; // STRAIGHT / CONTINUE / DEPART
-    }
-
-    // LaneSign list -> "dir:active|dir:active|..."  dir 0=straight 1=left 3=right
-    private static String encodeLanes(Object signs) {
-        if (!(signs instanceof List)) return "";
-        StringBuilder sb = new StringBuilder();
-        for (Object sign : (List<?>) signs) {
-            Object lanes = call(sign, "getLanes");
-            if (!(lanes instanceof List)) continue;
-            for (Object lane : (List<?>) lanes) {
-                Object dirs = call(lane, "getDirections");
-                Object hi = call(lane, "getHighlightedDirection");
-                int code = laneCode(dirs);
-                int active = hi != null ? 1 : 0;
-                if (sb.length() > 0) sb.append('|');
-                sb.append(code).append(':').append(active);
-            }
-        }
-        return sb.toString();
-    }
-
-    private static int laneCode(Object dirs) {
-        if (!(dirs instanceof List)) return 0;
-        for (Object d : (List<?>) dirs) {
-            String n = d instanceof Enum ? ((Enum<?>) d).name() : String.valueOf(d);
-            String s = n.toUpperCase();
-            if (s.contains("LEFT")) return 1;
-            if (s.contains("RIGHT")) return 3;
-        }
-        return 0;
     }
 
     private static int classifyIncident(Object obj) {

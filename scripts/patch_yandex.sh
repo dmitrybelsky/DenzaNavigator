@@ -113,6 +113,53 @@ try:
 except Exception as e:
     print(f"[!] manifest step: skip (manifest not text: {e}) -- decode without -r to enable")
 
+# 3d. REMOVE ADS (map billboard-pins + route-build banner): both come from the native
+#     com.yandex.advertkit.advert.BillboardRouteManager, fed to the advert LAYER via a thin
+#     navi-side wrapper (ru/.../multiplatform/advertkit/<x>.smali). The wrapper's getAdvertObjects()
+#     supplies the objects the layer draws and setRoute() loads them for the active route. Ad data
+#     rides the SHARED map backend (proxy.mob.maps.yandex.net) so it can't be domain-blocked; the
+#     AdvertComponentFactory singleton is called null-unsafe at 10+ direct sites so it can't be
+#     nulled. The wrapper is the one safe seam: keep the native manager valid (no NPE) but make
+#     getAdvertObjects()->empty and setRoute()->no-op => layer renders zero billboards. SIGNATURE-
+#     located (scoped to the advertkit wrapper pkg; the only class there holding a BillboardRouteManager
+#     field), so it survives obfuscation/version bumps. Promo/select-route/zero-speed wrappers return
+#     Session objects (null-unsafe) -> left intact.
+import glob as _gl
+def _neuter(m):
+    # Replace one method body with a type-correct stub IF it invokes the native BillboardRouteManager.
+    # Leaves constructors / abstract / native / non-proxy methods untouched. Idempotent: an
+    # already-stubbed method no longer invokes the manager, so it is skipped on re-run.
+    body = m.group(0); head = body.split('\n',1)[0]
+    if (' abstract ' in head or ' native ' in head or '<init>' in head or '<clinit>' in head
+            or 'Lcom/yandex/advertkit/advert/BillboardRouteManager;->' not in body):
+        return body
+    ret = head.rsplit(')',1)[1].strip()
+    if ret == 'V':
+        stub = '\n    .locals 0\n\n    return-void\n.end method'
+    elif ret == 'Ljava/util/List;':
+        stub = ('\n    .locals 1\n\n    invoke-static {}, Ljava/util/Collections;->emptyList()Ljava/util/List;\n\n'
+                '    move-result-object v0\n\n    return-object v0\n.end method')
+    elif ret.startswith('L') or ret.startswith('['):
+        stub = '\n    .locals 1\n\n    const/4 v0, 0x0\n\n    return-object v0\n.end method'
+    elif ret in ('Z','B','C','S','I','F'):
+        stub = '\n    .locals 1\n\n    const/4 v0, 0x0\n\n    return v0\n.end method'
+    elif ret in ('J','D'):
+        stub = '\n    .locals 2\n\n    const-wide/16 v0, 0x0\n\n    return-wide v0\n.end method'
+    else:
+        return body
+    return head + stub
+bb = 0
+for sm in _gl.glob(os.path.join(dec, 'smali*', 'ru','yandex','yandexmaps','multiplatform','advertkit','*.smali')):
+    try: t = open(sm, encoding='utf-8', errors='surrogateescape').read()
+    except Exception: continue
+    # identify the wrapper by its BillboardRouteManager FIELD (survives obfuscation AND our own edits;
+    # getAdvertObjects() disappears once stubbed, so don't key on it)
+    if ':Lcom/yandex/advertkit/advert/BillboardRouteManager;' not in t: continue
+    nt = re.sub(r'\.method[^\n]*\n.*?\.end method', _neuter, t, flags=re.S)
+    if nt != t:
+        open(sm,'w',encoding='utf-8',errors='surrogateescape').write(nt); bb += 1
+print(f"[+] remove-ads: billboard wrapper fully neutered ({bb})" if bb else "[=] remove-ads: billboard wrapper not found / already done")
+
 # 3b. PASSPORT login fix: a re-signed standalone Navi can't add a system account of the SHARED type
 #     "com.yandex.passport" — that AccountManager authenticator is owned by another (Yandex-signed)
 #     Yandex app (taxi/maps/...), so addAccountExplicitly throws "cannot explicitly add accounts of
@@ -151,30 +198,17 @@ hook_smali = """.class public Lru/yandex/yandexnavi/hud/HudHook;
 .super Ljava/lang/Object;
 
 .method public static sl(Landroid/view/View;Ljava/lang/String;)V
-    .locals 3
-
-    if-eqz p0, :done
+    .locals 0
 
     :try_start
-    invoke-virtual {p0}, Landroid/view/View;->getContext()Landroid/content/Context;
-    move-result-object v0
-    if-eqz v0, :done
-    new-instance v1, Landroid/content/Intent;
-    const-string v2, "ru.yandex.yandexnavi.HUD_SPEED_LIMIT"
-    invoke-direct {v1, v2}, Landroid/content/Intent;-><init>(Ljava/lang/String;)V
-    const-string v2, "com.bilibili.bilithings"
-    invoke-virtual {v1, v2}, Landroid/content/Intent;->setPackage(Ljava/lang/String;)Landroid/content/Intent;
-    const-string v2, "limit"
-    invoke-virtual {v1, v2, p1}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;
-    invoke-virtual {v0, v1}, Landroid/content/Context;->sendBroadcast(Landroid/content/Intent;)V
+    invoke-static {p1}, Lcom/zbyd/hudhook/HudEvents;->onSpeedLimit(Ljava/lang/String;)V
     :try_end
     .catch Ljava/lang/Throwable; {:try_start .. :try_end} :catch
 
-    :done
     return-void
 
     :catch
-    move-exception v0
+    move-exception p0
     return-void
 .end method
 """

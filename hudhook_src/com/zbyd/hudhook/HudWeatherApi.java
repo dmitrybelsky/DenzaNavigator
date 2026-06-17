@@ -22,7 +22,7 @@ import java.net.URL;
 public final class HudWeatherApi {
 
     private static final String HOST = "https://api.weather.yandex.ru/v2/forecast";
-    private static final String KEY  = "PUT-YANDEX-WEATHER-KEY-HERE"  /* extract X-Yandex-API-Key from ru.yandex.weatherplugin */;  // Yandex Weather embedded key (in-process)
+    private static final String KEY  = "REDACTED_WEATHER_KEY";  // Yandex Weather embedded key (in-process)
     private static final long MIN_INTERVAL_MS = 15 * 60 * 1000L;                 // refresh at most every 15 min
 
     private static volatile long sLastFetch;

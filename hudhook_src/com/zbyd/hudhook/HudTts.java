@@ -41,6 +41,14 @@ public final class HudTts {
         } catch (Throwable t) { HudLog.f("HudTts init fail: " + t); }
     }
 
+    /** Speak an arbitrary phrase (EV range summary, alerts) on the nav-guidance audio channel. */
+    public static void say(Context c, String text) {
+        if (!sEnabled || text == null) return;
+        ensure(c);
+        if (!sReady) return;
+        try { sTts.speak(text, TextToSpeech.QUEUE_ADD, null, "zbydsay"); } catch (Throwable t) {}
+    }
+
     /** Called on each maneuver. Speaks once per (icon, distance-band) to avoid spamming. */
     public static void maneuver(Context c, int bydIcon, int distM, String road) {
         if (!sEnabled) return;

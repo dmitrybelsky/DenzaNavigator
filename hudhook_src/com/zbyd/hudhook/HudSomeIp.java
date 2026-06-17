@@ -24,7 +24,8 @@ public final class HudSomeIp {
 
     private static final long SVC_HUD_NAVI = 3097367205183488L;
     private static final long SVC_SD_MAP = 3239172026531840L;
-    private static final long TOPIC_HUD_ROAD_INFO = 1127042368241665L;  // 665 — windshield HUD text+AR
+    private static final long TOPIC_HUD_ROAD_INFO = 1127042368241665L;  // 0x4010a00018001 — windshield HUD text+AR
+    private static final long TOPIC_HUD_MAP = 1127042368241667L;        // 0x4010a00018003 — HUD_NAVIGATIONMAP raster
     private static final long TOPIC_WEATHER = 1268847189590025L;        // regionalAndWeather
     private static final long TOPIC_FACILITY = 1268847189590021L;       // roadFacilities (parking)
     private static final long TOPIC_TUNNEL = 1268847189590020L;         // tunnel
@@ -70,13 +71,31 @@ public final class HudSomeIp {
         } catch (Throwable t) { return -200; } finally { r.recycle(); d.recycle(); }
     }
 
-    /** Publish one windshield HUD_ROAD_INFO frame (665): road + dist + eta + maneuver + AR guideLine. */
+    /** Publish one windshield HUD_ROAD_INFO frame (665): real Yandex position + route guideLine
+     *  (AR arrows follow the actual route ahead) + road/dist/eta/maneuver. lat/lon are the live
+     *  vehicle position; guideLine is the forward route polyline "[[lon,lat,0],...]" (null = synthetic). */
     private static int sHudLog;
-    public static void pushHud(Context c, String road, int distM, String eta, int bydIcon) {
+    public static void pushHud(Context c, String road, int distM, String eta, int bydIcon,
+                               double lat, double lon, String guideLine,
+                               int etaRemainSec, String lanes, int numLanes, int speedLimit) {
         ensure(c); start();
         if (sBinder == null) { if (sHudLog++ < 3) HudLog.f("pushHud: no SOME/IP service (phone) road=" + road + " dist=" + distM + " icon=" + bydIcon); return; }
-        int r = fire(TOPIC_HUD_ROAD_INFO, hudRoadInfoMsg(road, distM, eta, bydIcon, sCounter++ & 0xff));
-        if (sHudLog++ < 5) HudLog.f("pushHud fire ret=" + r + " road=" + road + " dist=" + distM + " icon=" + bydIcon);
+        if (lat == 0 && lon == 0) { lat = HUD_LAT; lon = HUD_LON; }   // pre-fix fallback
+        String gl = (guideLine == null || guideLine.length() < 4) ? guideLine(bydIcon, lat, lon) : guideLine;
+        int r = fire(TOPIC_HUD_ROAD_INFO, hudRoadInfoMsg(road, distM, eta, bydIcon, sCounter++ & 0xff, lat, lon, gl, etaRemainSec, lanes, numLanes, speedLimit));
+        if (sHudLog++ < 8) HudLog.f("pushHud fire ret=" + r + " road=" + road + " dist=" + distM + " icon=" + bydIcon + " eta=" + eta + " remain=" + etaRemainSec + " lanes=" + numLanes + " spdLim=" + speedLimit + " pos=" + lat + "," + lon + " gl=" + (gl == null ? 0 : gl.length()));
+    }
+
+    /** Publish the live Yandex map raster to the HUD map panel (event 0x8003 HudNavigationmap{f1=Base64 PNG}). */
+    private static int sMapLog;
+    public static void pushMap(Context c, byte[] pngBytes) {
+        ensure(c); start();
+        if (sBinder == null || pngBytes == null || pngBytes.length == 0) return;
+        String b64 = android.util.Base64.encodeToString(pngBytes, android.util.Base64.NO_WRAP);
+        ByteArrayOutputStream s = new ByteArrayOutputStream(b64.length() + 8);
+        sfield(s, 1, b64);                                   // HudNavigationmap.navigationMap_ = f1
+        int r = fire(TOPIC_HUD_MAP, embed(1, s.toByteArray()));
+        if (sMapLog++ < 6) HudLog.f("pushMap fire ret=" + r + " png=" + pngBytes.length + " b64=" + b64.length());
     }
 
     private static void startSd() {
@@ -131,29 +150,41 @@ public final class HudSomeIp {
         fireSd(c, TOPIC_LIGHT, s.toByteArray());
     }
 
-    // --- protobuf HudRoadInfoNotifyStruct (EG-wrapped), ported from hud-bench ----------------
-    private static byte[] hudRoadInfoMsg(String road, int distM, String eta, int maneuver, int counter) {
+    // --- protobuf HudRoadInfoNotifyStruct (EG-wrapped) — matches the proven launchermap reference
+    //     (HudNaviController.buildRoadInfo): f2 counter, f9 dist, f10 road, f16=2 navigatingStatus,
+    //     f19 lon, f20 lat, f26 eta, f28 maneuver/turn-id, f30 guideLine (AR arrows), f31 "lon,lat,0".
+    private static byte[] hudRoadInfoMsg(String road, int distM, String eta, int maneuver, int counter,
+                                         double lat, double lon, String guideLine,
+                                         int etaRemainSec, String lanes, int numLanes, int speedLimit) {
         ByteArrayOutputStream s = new ByteArrayOutputStream(96);
-        vfield(s, 1, 0); vfield(s, 2, counter);
-        vfield(s, 3, distM); vfield(s, 4, distM / 12);
-        vfield(s, 6, 8); vfield(s, 9, distM);
-        sfield(s, 10, road == null ? "" : road);
-        vfield(s, 12, 60); vfield(s, 16, 1);
-        dfield(s, 19, HUD_LON); dfield(s, 20, HUD_LAT);
-        sfield(s, 26, eta == null ? "" : eta); vfield(s, 27, distM / 12);
-        vfield(s, 28, maneuver);                              // f28 maneuver/turn-id
-        sfield(s, 30, guideLine(maneuver));                  // f30 AR road-arrow polyline
-        sfield(s, 31, HUD_LON + "," + HUD_LAT + ",0");
+        vfield(s, 2, counter);
+        if (numLanes > 0) vfield(s, 5, numLanes);          // f5 NUM_OF_LANES
+        byte[] icon = null;
+        try { icon = HudManeuverIcon.png(maneuver); } catch (Throwable t) {}   // f8 maneuver-arrow PNG
+        if (icon != null && icon.length > 0) bfield(s, 8, icon);
+        vfield(s, 9, distM);                                // f9 DISTANCE_2_INTERSECTION
+        sfield(s, 10, road == null ? "" : road);           // f10 NEXT_ROAD_NAME
+        if (speedLimit > 0) { vfield(s, 11, speedLimit); vfield(s, 15, speedLimit); } // f11/f15 speed limit
+        vfield(s, 16, 2);                                    // f16 NAVIGATING_STATUS = navigating
+        dfield(s, 19, lon); dfield(s, 20, lat);             // f19/f20 live vehicle position
+        sfield(s, 26, eta == null ? "" : eta);             // f26 ETA_INFO_TIME (arrival clock)
+        if (etaRemainSec > 0) vfield(s, 27, etaRemainSec); // f27 ETA_INFO_REMAIN_TIME (sec)
+        vfield(s, 28, maneuver);                            // f28 maneuver/turn-id
+        if (lanes != null && lanes.length() > 0) sfield(s, 29, lanes); // f29 LANESPERMISSIBLEDIRECTIONID
+        if (guideLine != null && guideLine.length() >= 4) sfield(s, 30, guideLine); // f30 GUIDELINE AR-arrows
+        sfield(s, 31, lon + "," + lat + ",0");             // f31 GUIDEPOINT
         return embed(1, s.toByteArray());
     }
 
-    private static String guideLine(int m) {
+    /** Synthetic fallback guideLine when real route geometry is unavailable: short forward stub from
+     *  the live position, bent by maneuver direction. Real AR uses the Yandex route polyline (HudEvents). */
+    private static String guideLine(int m, double lat0, double lon0) {
         StringBuilder b = new StringBuilder("[");
         for (int k = 0; k <= 9; k++) {
-            double lat = HUD_LAT + k * 0.0002;
+            double lat = lat0 + k * 0.0002;
             double turn = k > 5 ? (k - 5) * 0.0002 : 0.0;
-            double lon = (m == 2 || m == 4 || m == 6 || m == 8 || m == 17) ? HUD_LON - turn
-                       : (m == 3 || m == 5 || m == 7 || m == 18) ? HUD_LON + turn : HUD_LON;
+            double lon = (m == 2 || m == 4 || m == 6 || m == 8 || m == 17) ? lon0 - turn
+                       : (m == 3 || m == 5 || m == 7 || m == 18) ? lon0 + turn : lon0;
             b.append("[").append(lon).append(",").append(lat).append(",0]");
             if (k < 9) b.append(",");
         }
@@ -168,6 +199,9 @@ public final class HudSomeIp {
     private static void vfield(ByteArrayOutputStream o, int f, long v) { varint(o, f << 3); varint(o, v); }
     private static void sfield(ByteArrayOutputStream o, int f, String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        varint(o, (f << 3) | 2); varint(o, b.length); o.write(b, 0, b.length);
+    }
+    private static void bfield(ByteArrayOutputStream o, int f, byte[] b) {
         varint(o, (f << 3) | 2); varint(o, b.length); o.write(b, 0, b.length);
     }
     private static void dfield(ByteArrayOutputStream o, int f, double v) {

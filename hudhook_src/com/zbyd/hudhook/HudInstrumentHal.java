@@ -41,20 +41,26 @@ public final class HudInstrumentHal {
         } catch (Throwable t) { HudLog.f("HudInstrumentHal resolve fail: " + t); return false; }
     }
 
-    /** Push one Yandex maneuver to the cluster: turnType (bydIcon), road name, distance (m). */
+    private static volatile boolean sDirectDead;
+
+    /** Push one Yandex maneuver to the cluster: turnType (bydIcon), road name, distance (m).
+     *  The instrument HAL is signature-gated (BYDAUTO_INSTRUMENT_SET) so a re-signed Yandex can't
+     *  write it directly — route through the privileged agent (HudPrivClient -> HudPrivAgent injected
+     *  via JDWP into a perm-holding debuggable BYD app). A direct attempt stays as a phone fallback. */
     public static void pushManeuver(int turnType, String road, int distM) {
-        if (!resolve()) return;
+        HudPrivClient.cluster(turnType, distM, road);           // privileged channel (primary)
+        if (sDirectDead) return;
+        if (!resolve()) { sDirectDead = true; return; }
         try {
             if (!sNaviSet) { sNaviSet = true; try { mStatus.invoke(sDev, NAVI_OPEN_SET_DEST); } catch (Throwable t) {} }
             int r1 = (Integer) mSimple.invoke(sDev, turnType, distM);
             if (road != null && road.length() > 0) try { mNext.invoke(sDev, road); } catch (Throwable t) {}
-            if (sLog++ < 6) HudLog.f("HAL maneuver type=" + turnType + " dist=" + distM + " road=" + road + " ret=" + r1);
-        } catch (Throwable t) { if (sLog++ < 6) HudLog.f("HudInstrumentHal push fail: " + t); }
+            if (sLog++ < 3) HudLog.f("HAL direct maneuver type=" + turnType + " dist=" + distM + " ret=" + r1);
+        } catch (Throwable t) { sDirectDead = true; }           // perm deny -> stop direct, agent carries it
     }
 
-    /** Optional: a speed-camera/safety advisory (camType opaque — calibrate on car). */
+    /** Speed-camera/safety advisory via the privileged agent (camType opaque — calibrate on car). */
     public static void pushCamera(int camType, int distM, int roadClass) {
-        if (mCamera == null || !resolve()) return;
-        try { mCamera.invoke(sDev, camType, distM, roadClass); } catch (Throwable t) {}
+        HudPrivClient.camera(camType, distM, roadClass);
     }
 }

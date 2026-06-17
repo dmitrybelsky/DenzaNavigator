@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Masquerades as the BYD cluster "map demo" package so the cluster ProjectionService (which
+     whitelists by package name) launches OUR activities on the cluster display. Enabled by
+     `setprop persist.debug.cluster.projection 1`. Renders the live Yandex map raster (streamed
+     from the patched Yandex over LocalSocket "zbyd_cluster_map") into the cluster nav area. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.byd.cluster.projection.mapdemo"
+    android:versionCode="1" android:versionName="1.0">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+
+    <application android:label="ClusterMap" android:debuggable="true">
+
+        <service android:name=".ClusterMapService" android:exported="true"
+            android:foregroundServiceType="specialUse"/>
+
+        <activity android:name=".MapViewActivity" android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:launchMode="singleInstance" android:resizeableActivity="true"/>
+        <activity android:name=".MapTbtActivity" android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:launchMode="singleInstance" android:resizeableActivity="true"/>
+        <activity android:name=".MiniMapActivity" android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:launchMode="singleInstance" android:resizeableActivity="true"/>
+    </application>
+</manifest>

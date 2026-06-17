@@ -25,7 +25,14 @@ public final class HudLocationCar {
     private static final String CLIENT_ACTION = "com.ts.car.someip.SomeIpClientService";
     private static final String CLIENT_DESC = "ts.car.someip.sdk.ISomeIpClientInterface";
     private static final String CB_DESC = "ts.car.someip.sdk.ISomeIpCallback";
-    private static final int TX_REGISTER_CALLBACK = 1, TX_SUBSCRIBE = 8;
+    private static final int TX_REGISTER_CALLBACK = 1, TX_START_CLIENT = 4, TX_SUBSCRIBE = 8;
+    // services that own the positioning topics — must startClient(serviceId) before subscribe(topicId)
+    private static final long[] SERVICES = {
+        3096267694145536L,  // VEHICLE_POSITION_INFO
+        3096233535143936L,  // INS
+        3096271989178368L,  // RTK_IMU (RTK + IMU)
+        3096276284211200L,  // OBSTACLE_LANE_LINE
+    };
 
     // topic ids (event ids) of the positioning notifies
     private static final long T_VEHICLE_POSITION = 1125942857203713L;
@@ -66,6 +73,7 @@ public final class HudLocationCar {
             sBinder = b; HudLog.f("HudLocationCar connected");
             try {
                 registerCallback();
+                for (long sid : SERVICES) HudLog.f("startClient " + sid + " -> " + startClient(sid));
                 for (long t : TOPICS) HudLog.f("subscribe " + t + " -> " + subscribe(t));
             } catch (Throwable t) { HudLog.f("HudLocationCar setup fail: " + t); }
         }
@@ -80,6 +88,14 @@ public final class HudLocationCar {
             sBinder.transact(TX_REGISTER_CALLBACK, d, r, 0); r.readException();
             HudLog.f("registerCallback ok");
         } catch (Throwable t) { HudLog.f("registerCallback fail: " + t); }
+        finally { r.recycle(); d.recycle(); }
+    }
+
+    private static int startClient(long serviceId) {
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try { d.writeInterfaceToken(CLIENT_DESC); d.writeLong(serviceId);
+              sBinder.transact(TX_START_CLIENT, d, r, 0); r.readException(); return r.readInt(); }
+        catch (Throwable t) { HudLog.f("startClient " + serviceId + " fail: " + t); return -1; }
         finally { r.recycle(); d.recycle(); }
     }
 

@@ -41,6 +41,7 @@ public final class HudTlOcr {
         HudLog.f("setActivity (onStart hook works, dex loaded)");
         sActivity = a;
         try { HudLocation.install(); } catch (Throwable t) {}   // swap location source early (before subs)
+        try { HudMapCapture.start(a); } catch (Throwable t) {}  // live Yandex map -> HUD map panel (0x8003)
     }
 
     private static void start() {
