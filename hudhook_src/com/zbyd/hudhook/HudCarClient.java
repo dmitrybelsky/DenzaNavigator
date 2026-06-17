@@ -152,7 +152,9 @@ public final class HudCarClient {
     public static void acTemp(int celsius)   { write(1000, 501219368, Math.max(16, Math.min(30, celsius))); }
     public static void windowDriver(boolean open)    { write(1001, 1125122104, open ? 1 : 2); }
     public static void windowPassenger(boolean open) { write(1001, 1125122107, open ? 1 : 2); }
-    public static void sunroof(int op)       { write(1001, 1125122056, op); }   // 1 open/2 close/4 stop
+    // DEAD on N9: raw autoservice write doesn't actuate + N9 has no opening moonroof (fixed glass + shades).
+    // Use HudPrivClient.sunshade()/rearSunshade() (agent high-level HAL path, validated live). Kept for Leopard3.
+    @Deprecated public static void sunroof(int op) { write(1001, 1125122056, op); }   // 1 open/2 close/4 stop
     public static void interiorLight(boolean on)     { write(1023, 1330643002, on ? 2 : 1); }
     public static void ambientLight(boolean on)      { write(1023, 1069547536, on ? 5 : 1); }
     public static void lockDoors(boolean lock)       { write(1001, 1276141590, lock ? 2 : 1); }

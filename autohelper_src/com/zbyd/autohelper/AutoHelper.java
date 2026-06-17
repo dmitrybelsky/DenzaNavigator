@@ -1,5 +1,6 @@
 package com.zbyd.autohelper;
 
+import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.LocalServerSocket;
@@ -50,6 +51,9 @@ public final class AutoHelper {
                 StringBuilder sb = new StringBuilder();
                 for (int i = 1; i < args.length; i++) { if (i > 1) sb.append(' '); sb.append(args[i]); }
                 System.out.println(dispatch(sb.toString()));
+                System.out.flush();
+                try { Thread.sleep(1200); } catch (Throwable e) {}   // let oneway binder write flush
+                Runtime.getRuntime().halt(0);            // looper/binder threads keep JVM alive; force-exit
                 return;
             }
             if (args != null && args.length > 0) try { TX_READ = Integer.parseInt(args[0]); } catch (Throwable e) {}
@@ -86,7 +90,67 @@ public final class AutoHelper {
             String[] p = line.split("\\s+");
             if ("R".equals(p[0]))  return "OK " + transact(TX_READ,  Integer.parseInt(p[1]), Integer.parseInt(p[2]), 0, false);
             if ("W".equals(p[0]))  return "OK " + transact(TX_WRITE, Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]), true);
+            if ("RX".equals(p[0]))  return "OK " + transact(Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]), 0, false);
+            if ("WX".equals(p[0]))  return "OK " + transact(Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]), Integer.parseInt(p[4]), true);
+            if ("WA".equals(p[0])) {                                     // WA <tx> <dev> <fid> <value> — setIntArray layout
+                int tx = Integer.parseInt(p[1]), dev = Integer.parseInt(p[2]), fid = Integer.parseInt(p[3]), v = Integer.parseInt(p[4]);
+                Parcel d = Parcel.obtain(), rp = Parcel.obtain();
+                try { d.writeInterfaceToken(iface); d.writeInt(dev);
+                    d.writeInt(1); d.writeInt(fid); d.writeInt(1); d.writeInt(v);   // int[]{fid}, int[]{value}
+                    svc.transact(tx, d, rp, 0); return "OK " + (rp.dataAvail() >= 4 ? rp.readInt() : -999);
+                } finally { rp.recycle(); d.recycle(); }
+            }
+            if ("SEND".equals(p[0])) {                                   // SEND <abstractSocket> <message...>
+                String msg = line.substring(line.indexOf(p[2]));
+                android.net.LocalSocket ls = new android.net.LocalSocket();
+                ls.connect(new android.net.LocalSocketAddress(p[1], android.net.LocalSocketAddress.Namespace.ABSTRACT));
+                ls.getOutputStream().write((msg + "\n").getBytes("UTF-8")); ls.getOutputStream().flush();
+                try { ls.close(); } catch (Throwable e) {}
+                return "OK sent to @" + p[1];
+            }
+            if ("HAL".equals(p[0])) {                                    // HAL <fqDeviceClass> <method> [int args...]
+                Context c = ctx();
+                Class<?> k = Class.forName(p[1]);
+                Object dev = k.getMethod("getInstance", Context.class).invoke(null, c);
+                int n = p.length - 3;
+                Class<?>[] sig = new Class<?>[n]; Object[] av = new Object[n];
+                for (int i = 0; i < n; i++) { sig[i] = int.class; av[i] = Integer.parseInt(p[3 + i]); }
+                java.lang.reflect.Method m = null;
+                for (Class<?> cc = k; cc != null && m == null; cc = cc.getSuperclass())
+                    try { m = cc.getDeclaredMethod(p[2], sig); } catch (Throwable e) {}
+                if (m == null) return "ERR no method " + p[2];
+                m.setAccessible(true);
+                return "OK uid=" + android.os.Process.myUid() + " ret=" + m.invoke(dev, av);
+            }
+            if ("DSET".equals(p[0])) {                                   // DSET <fqDeviceClass> <fid> <value> — raw fid via protected set(dev,fid,val) w/ HAL perm
+                Context c = ctx();
+                Class<?> k = Class.forName(p[1]);
+                Object dev = k.getMethod("getInstance", Context.class).invoke(null, c);
+                int devType = 0;
+                for (Class<?> cc = k; cc != null; cc = cc.getSuperclass())
+                    try { java.lang.reflect.Field f = cc.getDeclaredField("mDeviceType"); f.setAccessible(true); devType = f.getInt(dev); break; } catch (Throwable e) {}
+                java.lang.reflect.Method m = null;
+                for (Class<?> cc = k; cc != null && m == null; cc = cc.getSuperclass())
+                    try { m = cc.getDeclaredMethod("set", int.class, int.class, int.class); } catch (Throwable e) {}
+                if (m == null) return "ERR no set(iii)";
+                m.setAccessible(true);
+                return "OK uid=" + android.os.Process.myUid() + " devType=" + devType
+                        + " ret=" + m.invoke(dev, devType, Integer.parseInt(p[2]), Integer.parseInt(p[3]));
+            }
             if ("EV".equals(p[0])) return ev();
+            if ("CONST".equals(p[0])) {                                  // CONST <class> <staticIntField>
+                java.lang.reflect.Field f = Class.forName(p[1]).getField(p[2]);
+                f.setAccessible(true);
+                return "OK " + f.getInt(null) + " (0x" + Integer.toHexString(f.getInt(null)) + ")";
+            }
+            if ("DEVT".equals(p[0])) {                                   // DEVT <deviceClass> -> mDeviceType
+                Class<?> k = Class.forName(p[1]);
+                java.lang.reflect.Field f = null;
+                for (Class<?> c = k; c != null && f == null; c = c.getSuperclass())
+                    try { f = c.getDeclaredField("mDeviceType"); } catch (Throwable e) {}
+                if (f == null) return "ERR no mDeviceType";
+                f.setAccessible(true); return "OK devType=" + f.getInt(null);
+            }
             return "ERR unknown";
         } catch (Throwable t) { return "ERR " + t; }
     }
@@ -115,6 +179,18 @@ public final class AutoHelper {
             return r;
         } catch (Throwable t) { return "ERR " + t; }
         finally { if (db != null) try { db.close(); } catch (Throwable e) {} }
+    }
+
+    /** Acquire a system Context from app_process (no Application). Needed by BYDAuto*Device.getInstance. */
+    private static Context ctx() {
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            try { Class.forName("android.os.Looper").getMethod("prepareMainLooper").invoke(null); } catch (Throwable e) {}
+            Object th = at.getMethod("systemMain").invoke(null);
+            Context c = (Context) at.getMethod("getSystemContext").invoke(th);
+            log("ctx ok " + c);
+            return c;
+        } catch (Throwable t) { log("ctx fail: " + t); return null; }
     }
 
     private static void log(String m) {

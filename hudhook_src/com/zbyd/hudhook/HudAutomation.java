@@ -37,8 +37,8 @@ public final class HudAutomation {
         if (HudFlags.on(ctx, HudFlags.WHEEL_HEAT)) {
             try { HudPrivClient.wheelHeat(true); HudLog.f("AUTO route-start -> wheel heat"); } catch (Throwable t) {}
         }
-        if (HudFlags.on(ctx, HudFlags.PANORAMA)) {            // open panoramic roof
-            try { HudCarClient.sunroof(1); HudLog.f("AUTO route-start -> panorama open"); } catch (Throwable t) {}
+        if (HudFlags.on(ctx, HudFlags.PANORAMA)) {            // open panorama sunshades (N9 = fixed glass + electric shades)
+            try { HudPrivClient.sunshade(100); HudPrivClient.rearSunshade(100); HudLog.f("AUTO route-start -> panorama shades open"); } catch (Throwable t) {}
         }
     }
 

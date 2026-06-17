@@ -90,10 +90,9 @@ class JDWP:
         out = {}
         for _ in range(n):
             mid, o = self.rd_mid(d, o)
-            nl = struct.unpack(">I", d[o:o+4])[0]; o += 4; name = d[o:o+nl].decode(); o += nl
-            sl = struct.unpack(">I", d[o:o+4])[0]; o += 4; sig = d[o:o+sl].decode(); o += sl
-            gl = struct.unpack(">I", d[o:o+4])[0]; o += 4; o += gl
-            mod = struct.unpack(">I", d[o:o+4])[0]; o += 4
+            nl = struct.unpack(">I", d[o:o+4])[0]; o += 4; name = d[o:o+nl].decode("utf-8", "replace"); o += nl
+            sl = struct.unpack(">I", d[o:o+4])[0]; o += 4; sig = d[o:o+sl].decode("utf-8", "replace"); o += sl
+            mod = struct.unpack(">I", d[o:o+4])[0]; o += 4   # ReferenceType.Methods (2,5): no generic field
             out.setdefault(name, []).append((mid, sig))
         return out
 

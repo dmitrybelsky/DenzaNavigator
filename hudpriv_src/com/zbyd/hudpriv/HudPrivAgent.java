@@ -52,7 +52,7 @@ public final class HudPrivAgent {
         ctx = (Context) Class.forName("android.app.ActivityThread")
                 .getMethod("currentApplication").invoke(null);
         resolveInstr();
-        boolean mapOn = writeFid(FID_HUD_NAVIGATION_MAP_SET, 1);        // enable HUD nav-map panel on startup
+        boolean mapOn = writeFidOn(instr, FID_HUD_NAVIGATION_MAP_SET, 1);  // enable HUD nav-map panel on startup
         LocalServerSocket srv = new LocalServerSocket(SOCK);
         log("listening on @" + SOCK + " uid=" + android.os.Process.myUid() + " instr=" + (instr != null) + " hudMap=" + mapOn);
         while (true) {
@@ -120,10 +120,14 @@ public final class HudPrivAgent {
                     Object ret = m.invoke(dev, av);
                     logN("SETTING " + q[1] + " " + java.util.Arrays.toString(av) + " ret=" + ret);
                 }
-            } else if ("FIDSET".equals(cmd)) {                          // FIDSET <hexOrDecFid> <val>
+            } else if ("FIDSET".equals(cmd)) {                          // FIDSET <hexOrDecFid> <val> — instrument device (1007)
                 int fid = p[1].toLowerCase().startsWith("0x")
                         ? (int) Long.parseLong(p[1].substring(2), 16) : Integer.parseInt(p[1]);
-                writeFid(fid, Integer.parseInt(p[2]));
+                writeFidOn(instr, fid, Integer.parseInt(p[2]));
+            } else if ("BODYFID".equals(cmd)) {                         // BODYFID <hexOrDecFid> <val> — bodywork device (1001): rear sunshade etc.
+                int fid = p[1].toLowerCase().startsWith("0x")
+                        ? (int) Long.parseLong(p[1].substring(2), 16) : Integer.parseInt(p[1]);
+                writeFidOn(body(), fid, Integer.parseInt(p[2]));
             } else if ("BODY".equals(cmd)) {                            // BODY <method> [int args...]
                 Object dev = body();                                    // windows/seats/doors/moonroof/trunk
                 String[] q = line.trim().split("\\s+");
@@ -144,13 +148,16 @@ public final class HudPrivAgent {
      *  UID holds BYDAUTO_INSTRUMENT_SET so the native permission check passes. */
     private static final int DEVICE_TYPE_INSTRUMENT = 1007;   // BYDAutoInstrumentDevice.mDeviceType (from sources)
 
-    private static boolean writeFid(int fid, int val) {
-        if (instr == null) return false;
+    /** Raw feature-id write on ANY BYDAuto device via its protected set(mDeviceType, fid, value).
+     *  deviceType read reflectively from the live instance; the agent UID holds the device's *_SET perm
+     *  so the native permission check passes. Validated on N9: rear sunshade fid 1276178472 on body (dt=1001). */
+    private static boolean writeFidOn(Object dev, int fid, int val) {
+        if (dev == null) return false;
         try {
-            java.lang.reflect.Field fdt = findField(instr.getClass(), "mDeviceType");
-            int dt = fdt != null ? fdt.getInt(instr) : DEVICE_TYPE_INSTRUMENT;
-            Method set3 = findMethod(instr.getClass(), "set", int.class, int.class, int.class);
-            Object ret = set3.invoke(instr, dt, fid, val);
+            java.lang.reflect.Field fdt = findField(dev.getClass(), "mDeviceType");
+            int dt = fdt != null ? fdt.getInt(dev) : DEVICE_TYPE_INSTRUMENT;
+            Method set3 = findMethod(dev.getClass(), "set", int.class, int.class, int.class);
+            Object ret = set3.invoke(dev, dt, fid, val);
             logN("FIDSET fid=0x" + Integer.toHexString(fid) + " dt=" + dt + " val=" + val + " ret=" + ret);
             return true;
         } catch (Throwable e) { log("writeFid 0x" + Integer.toHexString(fid) + " fail: " + e); return false; }

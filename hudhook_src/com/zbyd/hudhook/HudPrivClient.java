@@ -82,4 +82,13 @@ public final class HudPrivClient {
 
     /** Write a raw BYD instrument feature-id (hex "0x..") — cluster nav fields (ETA/mileage/trip/safety). */
     public static void fidSet(String hexFid, int val) { send("FIDSET " + hexFid + " " + val); }
+
+    /** Write a raw BYD bodywork feature-id (dev 1001) — e.g. rear sunshade (no high-level wrapper exists). */
+    public static void bodyFid(int fid, int val) { send("BODYFID " + fid + " " + val); }
+
+    // --- Panorama sunshades (N9 roof = fixed glass + electric shades; config 8 = front+rear sunshade) ---
+    // Front shade: setSunshadeState(pct) 0=closed/100=open (validated live on N9). Rear: raw fid (no method).
+    private static final int REAR_SUNSHADE_PERCENT_FID = 1276178472;   // BODYWORK_REAR_SUNSHADE_PANEL_PERCENT_SET (CanFD)
+    public static void sunshade(int pct)     { body("setSunshadeState", pct); }
+    public static void rearSunshade(int pct) { bodyFid(REAR_SUNSHADE_PERCENT_FID, pct); }
 }

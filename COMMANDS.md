@@ -4,6 +4,51 @@ Non-root интеграция Яндекс.Навигатора с BYD/Denza N9 
 распознавания Алисы (SpeechKit), исполнение — через shell-uid autoservice + JDWP-агент.
 
 > ⚠️ dev/fid контролов валидированы на BYD Leopard3 (DiLink 5.0). На N9 (5.1) проверять перед доверием.
+>
+> ✅ **N9 live-validated (2026-06-17):** не-root запись в железо работает через
+> `run-as com.byd.cameraautostudy → app_process → high-level HAL` (uid 10062 держит BODYWORK_SET,
+> framework сам делает корректный нативный transact). Подтверждено физически: передняя+задняя
+> электро-шторки панорамы (open/close). **Raw-autoservice запись от shell-uid на N9 НЕ актуирует**
+> (нативный протокол отличается от Leopard3) — использовать HAL-путь.
+
+---
+
+## ⚙️ Не-root запись в железо (N9, валидировано)
+
+N9 не рутован, Яндекс пересобран. Запись в авто-железо обходит signature-стену так:
+
+1. **`com.byd.cameraautostudy`** — debuggable, persistent, держит `BYDAUTO_BODYWORK_SET` /
+   `INSTRUMENT_SET` / `SETTING_SET` / `POWER_SET`.
+2. **`run-as com.byd.cameraautostudy app_process`** запускает наш код под uid 10062 (этого приложения) →
+   нативная perm-проверка autoservice проходит.
+3. Зовём **high-level HAL** `BYDAuto*Device.getInstance(ctx).<method>()` — framework делает
+   правильный нативный transact (raw transact от shell на N9 даёт `ret`-мусор, не актуирует).
+4. Context в app_process берём через `ActivityThread.systemMain().getSystemContext()`.
+
+```bash
+# one-shot (тест). Context + halt(0) внутри, чистый выход.
+RUNAS="run-as com.byd.cameraautostudy sh -c"
+DEV=android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice
+adb shell "$RUNAS 'cp -f /data/local/tmp/AutoHelper.dex a.dex; \
+  CLASSPATH=./a.dex app_process /system/bin com.zbyd.autohelper.AutoHelper once HAL $DEV setSunshadeState 100'"
+# -> OK uid=10062 ret=0   (передняя шторка открылась)
+```
+
+| AutoHelper one-shot | Действие |
+|---|---|
+| `HAL <fqDeviceClass> <method> [intargs...]` | вызвать high-level HAL-метод под HAL-perm |
+| `DSET <fqDeviceClass> <fid> <value>` | raw fid через protected `set(dev,fid,val)` (контролы без обёртки) |
+| `CONST <class> <field>` / `DEVT <class>` | прочитать константу fid / deviceType |
+| `R/W/RX/WX/WA` | raw autoservice transact (Leopard3; на N9 НЕ актуирует) |
+
+### Панорама N9 = электро-шторки (не открывающийся люк!)
+`getMoonRoofConfig()=8 = CONFIG_FRONT_SUNSHADE_AND_REAR_SUNSHADE`. Стекло фиксированное, двигаются шторки.
+
+| Контрол | путь | значения |
+|---|---|---|
+| Передняя шторка | `HAL …bodywork.BYDAutoBodyworkDevice setSunshadeState <pct>` | 0=закр / 100=откр / 254=стоп |
+| Задняя шторка | `DSET …bodywork.BYDAutoBodyworkDevice 1276178472 <pct>` | 0=закр / 100=откр |
+| (moonroof) | `setMoonRoofState`/`voiceCtlMoonRoof` — `ret=0`, но **мотора нет** | — |
 
 ---
 
@@ -31,7 +76,7 @@ Non-root интеграция Яндекс.Навигатора с BYD/Denza N9 
 | Скажи | Действие |
 |---|---|
 | «открой/закрой окно [пассажира / все]» | стёкла |
-| «открой/закрой люк» | панорама-крыша |
+| «открой/закрой люк (панораму / шторки)» | электро-шторки панорамы (перед+зад) |
 | «открой/закрой багажник» | багажник |
 | «заблокируй/разблокируй двери» | замки |
 | «включи/выключи свет [салона]» | свет салона |
@@ -108,7 +153,10 @@ adb shell "CLASSPATH=... AutoHelper once W 1001 1125122056 4"   # sunroof STOP (
 | Подогрев сиденья | `SETTING setSeatHeatingState <seat> <1off/2low/3high>` |
 | Вентиляция сиденья | `SETTING setSeatVentilatingState <seat> <level>` |
 | Подогрев руля | `SETTING setSteeringWheelHeatingState <1off/2on>` |
-| Багажник / люк / окна / крылья | `BODY setHetchDoorStatus/setMoonRoofState/...` |
+| Багажник / окна / крылья | `BODY setHetchDoorStatus/...` (high-level метод) |
+| Передняя шторка панорамы | `BODY setSunshadeState <0..100>` |
+| Задняя шторка панорамы | `BODYFID 1276178472 <0..100>` (raw fid, dev 1001) |
+| Любой fid без обёртки (bodywork) | `BODYFID <fid> <val>` |
 
 ---
 

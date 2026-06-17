@@ -78,7 +78,10 @@ public final class HudVoice {
             return true;
         }
         if (has(s, "багажник")) { HudPrivClient.body("setHetchDoorStatus", on ? 1 : 2); ok(on ? "Открываю багажник" : "Закрываю багажник"); return true; }
-        if (has(s, "люк"))      { HudCarClient.sunroof(on ? 1 : 2); ok(on ? "Открываю люк" : "Закрываю люк"); return true; }
+        if (has(s, "люк", "панорам", "штор")) {   // N9 roof = electric sunshades (fixed glass); validated path
+            HudPrivClient.sunshade(on ? 100 : 0); HudPrivClient.rearSunshade(on ? 100 : 0);
+            ok(on ? "Открываю шторки панорамы" : "Закрываю шторки панорамы"); return true;
+        }
         if (has(s, "замок", "двер")) { HudCarClient.lockDoors(!on); ok(on ? "Разблокирую двери" : "Блокирую двери"); return true; }
         if (has(s, "климат", "кондиц")) { HudCarClient.ac(on); ok(on ? "Включаю климат" : "Выключаю климат"); return true; }
         if (has(s, "подсветк", "амбиент")) { HudCarClient.ambientLight(on); ok(on ? "Включаю подсветку" : "Выключаю подсветку"); return true; }
