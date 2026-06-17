@@ -274,6 +274,27 @@ else:
             inj = m.group(1) + "\n    invoke-static {p0}, Lcom/zbyd/hudhook/HudTlOcr;->setActivity(Landroid/app/Activity;)V\n"
             open(f,'w',encoding='utf-8',errors='surrogateescape').write(t[:m.start()] + inj + t[m.end():])
             print(f"[+] activity hook: HudTlOcr.setActivity injected ({os.path.relpath(f,dec)}::{m.group(1).split()[-1].split('(')[0]})")
+
+# 8. VOICE hook: Alice car-control. Inject into the SpeechKit RecognizerListener impl's
+#    onPartialResults(Recognizer, Recognition, Z) -> HudVoice.onRecognized(getBestResultText(), isFinal).
+#    Located by `.implements ru/yandex/speechkit/RecognizerListener` (public SDK iface — stable across
+#    obfuscation). Scoped to alice/speechkit dirs for speed.
+vh = 0
+for sm in (glob.glob(os.path.join(dec,'smali_classes*','com','yandex','alice','**','*.smali'), recursive=True)
+           + glob.glob(os.path.join(dec,'smali_classes*','ru','yandex','speechkit','**','*.smali'), recursive=True)):
+    try: t = open(sm, encoding='utf-8', errors='surrogateescape').read()
+    except Exception: continue
+    if '.implements Lru/yandex/speechkit/RecognizerListener;' not in t or 'HudVoice' in t: continue
+    m = re.search(r'(\.method public (?:final |bridge |synthetic )*onPartialResults\(Lru/yandex/speechkit/Recognizer;Lru/yandex/speechkit/Recognition;Z\)V\n)([ \t]*\.locals (\d+)\n)', t)
+    if not m: continue
+    head = m.group(1) + ('    .locals 1\n' if int(m.group(3)) < 1 else m.group(2))
+    inj = ('\n    invoke-virtual {p2}, Lru/yandex/speechkit/Recognition;->getBestResultText()Ljava/lang/String;\n'
+           '    move-result-object v0\n'
+           '    invoke-static {v0, p3}, Lcom/zbyd/hudhook/HudVoice;->onRecognized(Ljava/lang/String;Z)V\n')
+    open(sm,'w',encoding='utf-8',errors='surrogateescape').write(t[:m.start()] + head + inj + t[m.end():])
+    vh += 1
+    print(f"[+] voice hook: HudVoice injected ({os.path.relpath(sm, dec)})")
+if vh == 0: print("[=] voice hook: RecognizerListener.onPartialResults not found -- skip")
 PY
 
 if [ "$NO_BUILD" = "1" ]; then echo "[*] --no-build: patches applied, skipping rebuild"; exit 0; fi

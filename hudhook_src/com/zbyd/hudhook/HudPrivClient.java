@@ -67,6 +67,13 @@ public final class HudPrivClient {
         send(sb.toString());
     }
 
+    /** Invoke a BYDAutoBodyworkDevice setter (windows/doors/moonroof/trunk) by method name + int args. */
+    public static void body(String method, int... vals) {
+        StringBuilder sb = new StringBuilder("BODY ").append(method);
+        for (int v : vals) sb.append(' ').append(v);
+        send(sb.toString());
+    }
+
     // Seat comfort (BYDAutoSettingDevice.setSeat{Heating,Ventilating}State(seat, level); seat 1..n, level 0-3).
     public static void seatHeat(int seat, int level) { setting("setSeatHeatingState", seat, level); }
     public static void seatVent(int seat, int level) { setting("setSeatVentilatingState", seat, level); }

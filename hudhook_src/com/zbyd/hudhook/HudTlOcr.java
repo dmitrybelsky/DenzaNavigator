@@ -42,6 +42,7 @@ public final class HudTlOcr {
         sActivity = a;
         try { HudLocation.install(); } catch (Throwable t) {}   // swap location source early (before subs)
         try { HudMapCapture.start(a); } catch (Throwable t) {}  // live Yandex map -> HUD map panel (0x8003)
+        try { HudVoice.attach(a); } catch (Throwable t) {}      // Alice voice -> car control (context for TTS confirm)
     }
 
     private static void start() {
