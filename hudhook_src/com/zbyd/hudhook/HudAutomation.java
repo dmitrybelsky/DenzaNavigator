@@ -12,13 +12,7 @@ import android.content.Context;
  */
 public final class HudAutomation {
 
-    // conservative defaults: safety-positive rules on, comfort/unvalidated off
-    private static final boolean RAIN_WINDOWS = true;
-    private static final boolean ROUTE_AC     = false;     // auto-AC on route start (opt-in)
-    private static final boolean TURN_AMBIENT = true;
-    private static final boolean TUNNEL_LIGHT = false;     // unvalidated headlight fid
-    private static final boolean EV_WARN      = true;
-    private static final boolean TPMS_WARN    = true;
+    // toggles are runtime (HudFlags) so any auto-behavior is disableable (voice / settings)
 
     // autoservice dev/fid (BYDMate-validated unless noted)
     private static final int DEV_BODY = 1001, DEV_CLIMATE = 1000, DEV_LIGHT = 1023;
@@ -36,12 +30,12 @@ public final class HudAutomation {
     /** Called on each route (re)start — reset per-route latches. */
     public static void onRouteStart() {
         acDone = false; evWarnDone = false; tpmsWarned = false;
-        if (ROUTE_AC) { try { HudCarClient.ac(true); HudLog.f("AUTO route-start -> AC on"); } catch (Throwable t) {} }
+        if (HudFlags.on(ctx, HudFlags.AUTOSTART)) { try { HudCarClient.ac(true); HudLog.f("AUTO route-start -> AC on"); } catch (Throwable t) {} }
     }
 
     /** Rain level 0-14 (BYDAutoSensorDevice.getRainfall). Close windows when it actually rains. */
     public static void onRain(int level) {
-        if (!RAIN_WINDOWS || level < 4) return;
+        if (!HudFlags.on(ctx, HudFlags.RAIN) || level < 4) return;
         long now = now(); if (now - lastRainClose < 60000) return; lastRainClose = now;
         try { for (int fid : WINDOW_POS) HudCarClient.write(DEV_BODY, fid, 0); }   // 0 = fully closed
         catch (Throwable t) {}
@@ -50,7 +44,7 @@ public final class HudAutomation {
 
     /** Nearest maneuver (bydIcon + distance m). Pulse ambient near a turn; auto-AC once if enabled. */
     public static void onManeuver(int bydIcon, int distM) {
-        if (TURN_AMBIENT) {
+        if (HudFlags.on(ctx, HudFlags.AMBIENT)) {
             boolean turn = (bydIcon == 2 || bydIcon == 3 || bydIcon == 4 || bydIcon == 5
                     || bydIcon == 6 || bydIcon == 7 || bydIcon == 17 || bydIcon == 18);
             if (turn && distM > 0 && distM < 150 && !ambientOn) {
@@ -59,12 +53,12 @@ public final class HudAutomation {
                 ambientOn = false; try { HudCarClient.ambientLight(false); } catch (Throwable t) {}
             }
         }
-        if (ROUTE_AC && !acDone) { acDone = true; try { HudCarClient.ac(true); } catch (Throwable t) {} }
+        if (HudFlags.on(ctx, HudFlags.AUTOSTART) && !acDone) { acDone = true; try { HudCarClient.ac(true); } catch (Throwable t) {} }
     }
 
     /** Tunnel ahead/inside (Yandex). Optionally enable auto-headlight mode (unvalidated fid). */
     public static void onTunnel(int distAheadM, boolean inside) {
-        if (TUNNEL_LIGHT && inside) {
+        if (HudFlags.on(ctx, HudFlags.HEADLIGHT) && inside) {
             try { HudCarClient.write(DEV_LIGHT, FID_AUTO_LIGHT, 1); HudLog.f("AUTO tunnel -> auto-light"); }
             catch (Throwable t) {}
         }
@@ -72,7 +66,7 @@ public final class HudAutomation {
 
     /** Remaining route distance (m) vs EV range — warn once if it may not reach. */
     public static void onRouteProgress(int remainingM) {
-        if (!EV_WARN || evWarnDone) return;
+        if (!HudFlags.on(ctx, HudFlags.EV_WARN) || evWarnDone) return;
         double range = HudCarClient.rangeKm();
         if (range > 10 && remainingM / 1000.0 > range * 0.95) {
             evWarnDone = true;
@@ -83,7 +77,7 @@ public final class HudAutomation {
     }
 
     private static void checkTpms() {
-        if (!TPMS_WARN || tpmsWarned) return;
+        if (!HudFlags.on(ctx, HudFlags.TPMS) || tpmsWarned) return;
         long now = now(); if (now - lastTpms < 30000) return; lastTpms = now;
         try {
             int low = -1, lowVal = 0;

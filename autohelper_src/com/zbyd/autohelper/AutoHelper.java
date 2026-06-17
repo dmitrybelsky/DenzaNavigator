@@ -107,9 +107,9 @@ public final class AutoHelper {
         SQLiteDatabase db = null;
         try {
             db = SQLiteDatabase.openDatabase(ENERGY_DB, null, SQLiteDatabase.OPEN_READONLY);
-            Cursor c = db.rawQuery("SELECT soc, mileage, total_elec FROM last_state WHERE id=1", null);
+            Cursor c = db.rawQuery("SELECT soc, mileage, total_elec, ignition FROM last_state WHERE id=1", null);
             String r = c.moveToFirst()
-                    ? "OK soc=" + c.getInt(0) + " mileage=" + c.getDouble(1) + " total_elec=" + c.getDouble(2)
+                    ? "OK soc=" + c.getInt(0) + " mileage=" + c.getDouble(1) + " total_elec=" + c.getDouble(2) + " ign=" + c.getInt(3)
                     : "ERR no_row";
             c.close();
             return r;

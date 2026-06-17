@@ -62,11 +62,56 @@ public final class HudCarClient {
             double cons = (elec - sPrevElec) / (mileage - sPrevMileage) * 100.0;   // kWh/100km
             if (cons > 5 && cons < 60) sCons = 0.7 * sCons + 0.3 * cons;           // smoothed
         }
+        int ign = (int) val(r, "ign=");
+        boolean parked = sPrevMileage > 0 && Math.abs(mileage - sPrevMileage) < 0.1;
+        // charge session: SOC rising while parked / ignition off
+        if (soc > sPrevSoc && sPrevSoc >= 0 && (parked || ign == 0)) {
+            if (!sCharging) { sCharging = true; sChgStartTs = System.currentTimeMillis(); sChgStartSoc = sPrevSoc; sChgStartElec = elec; }
+            sChgLastTs = System.currentTimeMillis();
+        } else if (sCharging && (soc < sPrevSoc || ign == 1 || System.currentTimeMillis() - sChgLastTs > 600000)) {
+            logCharge(soc); sCharging = false;
+        }
+        if (soc >= 0) sPrevSoc = soc;
         if (mileage > 0) { sPrevMileage = mileage; sPrevElec = elec; }
         if (sSoc >= 0 && sCons > 0) sRangeKm = sSoc / 100.0 * CAPACITY_KWH / sCons * 100.0;
-        HudLog.f("EV soc=" + sSoc + " range=" + (int) sRangeKm + "km cons=" + String.format(java.util.Locale.US, "%.1f", sCons) + " odo=" + (long) sMileage);
+        pollTpms();
+        HudLog.f("EV soc=" + sSoc + " range=" + (int) sRangeKm + "km cons=" + String.format(java.util.Locale.US, "%.1f", sCons) + " odo=" + (long) sMileage + " tpms=" + java.util.Arrays.toString(sTpms));
         journal();
         announceOnce();
+    }
+
+    // ---- TPMS (4 tire pressures via autoservice; BYDMate dev=1001, 4th fid guessed) ----------
+    private static final int[] TPMS_FID = {947912728, 947912736, 947912744, 947912752};   // LF,LR,RF,RR
+    private static final int[] sTpms = {0, 0, 0, 0};
+    public static int[] tpms() { return sTpms; }
+    private static long sTpmsTs;
+    private static void pollTpms() {
+        if (System.currentTimeMillis() - sTpmsTs < 60000) return; sTpmsTs = System.currentTimeMillis();
+        for (int i = 0; i < 4; i++) { int p = read(1001, TPMS_FID[i]); if (p > 50 && p < 600) sTpms[i] = p; }
+    }
+
+    // ---- charge journal -----------------------------------------------------------------------
+    private static volatile boolean sCharging;
+    private static long sChgStartTs, sChgLastTs;
+    private static int sChgStartSoc = -1;
+    private static double sChgStartElec;
+    private static volatile int sPrevSoc = -1;
+    private static void logCharge(int endSoc) {
+        try {
+            int added = endSoc - sChgStartSoc;
+            if (added < 1) return;
+            double kwh = added / 100.0 * CAPACITY_KWH;
+            long durMin = (sChgLastTs - sChgStartTs) / 60000;
+            java.io.File f = new java.io.File(sCtx.getFilesDir(), "charge_journal.csv");
+            boolean head = !f.exists();
+            java.io.FileWriter w = new java.io.FileWriter(f, true);
+            if (head) w.write("start_ts,end_ts,soc_start,soc_end,kwh_added,duration_min\n");
+            w.write(sChgStartTs + "," + sChgLastTs + "," + sChgStartSoc + "," + endSoc + ","
+                    + String.format(java.util.Locale.US, "%.1f", kwh) + "," + durMin + "\n");
+            w.close();
+            HudLog.f("CHARGE +" + added + "% (" + String.format(java.util.Locale.US, "%.1f", kwh) + "kWh, " + durMin + "min)");
+            try { HudTts.say(sCtx, "Зарядка завершена, добавлено " + added + " процентов"); } catch (Throwable t) {}
+        } catch (Throwable t) {}
     }
 
     /** Append an EV snapshot to a trip journal CSV (getFilesDir/ev_journal.csv) — trips/charges derivable. */

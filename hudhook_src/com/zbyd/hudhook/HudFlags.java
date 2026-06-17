@@ -1,0 +1,41 @@
+package com.zbyd.hudhook;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+/**
+ * Runtime feature toggles (SharedPreferences "zbyd_hud"). Lets the user disable any auto-behavior
+ * (automation, auto-start/preconditioning) without a rebuild — via voice ("включи/выключи автозапуск")
+ * or an external `am`/settings write. Conservative defaults: safety-positive on, comfort/intrusive off.
+ */
+public final class HudFlags {
+
+    public static final String MASTER     = "auto_master";     // global automation kill-switch
+    public static final String AUTOSTART  = "autostart";       // preconditioning (climate on at route start)
+    public static final String RAIN       = "auto_rain";       // rain -> close windows
+    public static final String AMBIENT    = "auto_ambient";    // turn -> ambient pulse
+    public static final String HEADLIGHT  = "auto_headlight";  // tunnel -> auto headlight (unvalidated)
+    public static final String EV_WARN    = "auto_evwarn";     // route > range -> spoken warning
+    public static final String TPMS       = "auto_tpms";       // low tire -> warning
+
+    private static SharedPreferences p(Context c) {
+        return c.getApplicationContext().getSharedPreferences("zbyd_hud", Context.MODE_PRIVATE);
+    }
+
+    public static boolean def(String key) {
+        return AUTOSTART.equals(key) || HEADLIGHT.equals(key) ? false : true;   // autostart/headlight off by default
+    }
+
+    public static boolean on(Context c, String key) {
+        if (c == null) return def(key);
+        try {
+            if (!MASTER.equals(key) && !p(c).getBoolean(MASTER, true)) return false;   // master gate
+            return p(c).getBoolean(key, def(key));
+        } catch (Throwable t) { return def(key); }
+    }
+
+    public static void set(Context c, String key, boolean v) {
+        if (c == null) return;
+        try { p(c).edit().putBoolean(key, v).apply(); HudLog.f("FLAG " + key + "=" + v); } catch (Throwable t) {}
+    }
+}

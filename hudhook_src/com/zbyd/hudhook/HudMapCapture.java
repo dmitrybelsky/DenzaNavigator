@@ -85,7 +85,8 @@ public final class HudMapCapture {
         try {
             int soc = HudCarClient.soc(); int range = (int) HudCarClient.rangeKm();
             if (soc < 0 || !bmp.isMutable()) return;
-            String txt = soc + "%  " + range + "km";
+            boolean tireLow = false; for (int p : HudCarClient.tpms()) if (p > 50 && p < 180) tireLow = true;
+            String txt = soc + "%  " + range + "km" + (tireLow ? "  !шина" : "");
             android.graphics.Canvas cv = new android.graphics.Canvas(bmp);
             android.graphics.Paint bg = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
             bg.setColor(0xC0000000);

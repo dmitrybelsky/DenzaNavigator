@@ -28,6 +28,25 @@ public final class HudVoice {
     }
 
     private static boolean handle(String s) {
+        if (has(s, "давлен", "шин", "колес")) {                  // query: speak tire pressures
+            int[] t = HudCarClient.tpms();
+            ok("Давление в шинах: " + t[0] + ", " + t[1] + ", " + t[2] + ", " + t[3]);
+            return true;
+        }
+        if (has(s, "заряд", "запас хода", "сколько проеду")) {   // query: speak SOC/range
+            ok("Заряд " + HudCarClient.soc() + " процентов, запас хода " + (int) HudCarClient.rangeKm() + " километров");
+            return true;
+        }
+        boolean tOn = has(s, "включи", "вкл"), tOff = has(s, "выключи", "выкл", "отключи");
+        if ((tOn || tOff) && has(s, "автозапуск", "преднагрев", "прогрев")) {
+            HudFlags.set(sCtx, HudFlags.AUTOSTART, tOn); ok(tOn ? "Автозапуск включён" : "Автозапуск выключен"); return true;
+        }
+        if ((tOn || tOff) && has(s, "автоматик")) {
+            HudFlags.set(sCtx, HudFlags.MASTER, tOn); ok(tOn ? "Автоматика включена" : "Автоматика выключена"); return true;
+        }
+        if (has(s, "прогрей", "подготовь", "запусти машин", "разогрей")) {  // on-demand preconditioning
+            HudCarClient.ac(true); ok("Прогреваю машину"); return true;
+        }
         boolean open  = has(s, "открой", "подними", "опусти", "включи", "разблокир");
         boolean close = has(s, "закрой", "выключи", "заблокир");
         if (!open && !close) {
