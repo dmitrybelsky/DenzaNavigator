@@ -7,6 +7,8 @@ SERIAL="${1:-192.168.1.67:5555}"
 S="$(dirname "$0")"
 adb connect "$SERIAL" >/dev/null 2>&1
 adb -s "$SERIAL" push "$S/patches/AutoHelper.dex" /data/local/tmp/AutoHelper.dex >/dev/null
+adb -s "$SERIAL" push "$S/patches/HudPrivAgent.dex" /data/local/tmp/HudPrivAgent.dex >/dev/null
+adb -s "$SERIAL" shell mkdir -p /data/local/tmp/zbyd-odex
 adb -s "$SERIAL" push "$S/zbyd_boot.sh" /data/local/tmp/zbyd_boot.sh >/dev/null
 adb -s "$SERIAL" shell chmod 755 /data/local/tmp/zbyd_boot.sh
 adb -s "$SERIAL" install -r -t "$S/bootstrap.apk" 2>&1 | tail -1

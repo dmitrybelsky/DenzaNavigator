@@ -26,13 +26,16 @@ public final class BootstrapService extends Service {
         return START_NOT_STICKY;
     }
 
+    private static final String HOST = "127.0.0.1";
+    private static final int PORT = 5555;
+    private static final String CAMERA = "com.byd.cameraautostudy";
+
     private void runBootstrap() {
         for (int attempt = 0; attempt < 12; attempt++) {
             try {
-                AdbClient adb = new AdbClient(getFilesDir());
-                String out = adb.shell("127.0.0.1", 5555, SCRIPT);
-                Log.i(TAG, "bootstrap ok: " + out);
-                log("bootstrap ok: " + out);
+                String out = new AdbClient(getFilesDir()).shell(HOST, PORT, SCRIPT);   // AutoHelper + masquerade
+                log("boot script: " + out);
+                try { injectAgent(); } catch (Throwable t) { log("agent inject fail: " + t); }  // best-effort
                 stopSelf(); return;
             } catch (Throwable t) {
                 Log.w(TAG, "attempt " + attempt + ": " + t);
@@ -42,6 +45,33 @@ public final class BootstrapService extends Service {
         }
         stopSelf();
     }
+
+    /** Re-inject the privileged agent (HudPrivAgent.dex) into cameraautostudy via JDWP-over-ADB. */
+    private void injectAgent() throws Exception {
+        String pid = sh("pidof " + CAMERA).trim();
+        if (pid.isEmpty()) { sh("am start -n " + CAMERA + "/.CameraAutoStudyTest"); Thread.sleep(1500); pid = sh("pidof " + CAMERA).trim(); }
+        if (pid.isEmpty()) { log("no " + CAMERA + " pid"); return; }
+        final String fpid = pid.split("\\s+")[0];
+        final boolean[] done = {false};
+        Thread poke = new Thread(new Runnable() { @Override public void run() {
+            try { AdbClient pc = new AdbClient(getFilesDir()); pc.connect(HOST, PORT);
+                while (!done[0]) {
+                    try { AdbClient.AdbStream ps = pc.open("shell:am start -n " + CAMERA + "/.CameraAutoStudyTest");
+                          while (ps.readChunk() != null) {} } catch (Throwable t) {}
+                    Thread.sleep(800);
+                }
+            } catch (Throwable t) {}
+        }}, "zbyd-poke");
+        poke.start();
+        try {
+            AdbClient jc = new AdbClient(getFilesDir()); jc.connect(HOST, PORT);
+            AdbClient.AdbStream js = jc.open("jdwp:" + fpid);
+            String r = new JdwpInject(js).inject("/data/local/tmp/HudPrivAgent.dex", "/data/local/tmp/zbyd-odex", "com.zbyd.hudpriv.HudPrivAgent");
+            log("agent inject: " + r);
+        } finally { done[0] = true; }
+    }
+
+    private String sh(String cmd) throws Exception { return new AdbClient(getFilesDir()).shell(HOST, PORT, cmd); }
 
     private void fg() {
         try {
