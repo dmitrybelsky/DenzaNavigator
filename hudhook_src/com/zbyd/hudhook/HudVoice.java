@@ -47,6 +47,16 @@ public final class HudVoice {
         if (has(s, "прогрей", "подготовь", "запусти машин", "разогрей")) {  // on-demand preconditioning
             HudCarClient.ac(true); ok("Прогреваю машину"); return true;
         }
+        if ((tOn || tOff) && has(s, "подогрев руля", "обогрев руля", "руль")) {
+            if (has(s, "старт", "автозапуск")) { HudFlags.set(sCtx, HudFlags.WHEEL_HEAT, tOn); ok(tOn ? "Подогрев руля на старте включён" : "Подогрев руля на старте выключен"); }
+            else { HudPrivClient.wheelHeat(tOn); ok(tOn ? "Включаю подогрев руля" : "Выключаю подогрев руля"); }
+            return true;
+        }
+        if ((tOn || tOff) && has(s, "подогрев сид", "обогрев сид", "подогрев кресел", "подогрев сидений")) {
+            if (has(s, "старт", "автозапуск")) { HudFlags.set(sCtx, HudFlags.SEAT_HEAT, tOn); ok(tOn ? "Подогрев сидений на старте включён" : "Подогрев сидений на старте выключен"); }
+            else { HudPrivClient.seatHeat(1, tOn ? 3 : 1); HudPrivClient.seatHeat(2, tOn ? 3 : 1); ok(tOn ? "Включаю подогрев сидений" : "Выключаю подогрев сидений"); }
+            return true;
+        }
         boolean open  = has(s, "открой", "подними", "опусти", "включи", "разблокир");
         boolean close = has(s, "закрой", "выключи", "заблокир");
         if (!open && !close) {
@@ -68,7 +78,6 @@ public final class HudVoice {
         if (has(s, "люк"))      { HudCarClient.sunroof(on ? 1 : 2); ok(on ? "Открываю люк" : "Закрываю люк"); return true; }
         if (has(s, "замок", "двер")) { HudCarClient.lockDoors(!on); ok(on ? "Разблокирую двери" : "Блокирую двери"); return true; }
         if (has(s, "климат", "кондиц")) { HudCarClient.ac(on); ok(on ? "Включаю климат" : "Выключаю климат"); return true; }
-        if (has(s, "подогрев сид") || has(s, "обогрев сид")) { HudPrivClient.seatHeat(1, on ? 3 : 0); ok(on ? "Включаю подогрев сиденья" : "Выключаю подогрев"); return true; }
         if (has(s, "подсветк", "амбиент")) { HudCarClient.ambientLight(on); ok(on ? "Включаю подсветку" : "Выключаю подсветку"); return true; }
         if (has(s, "свет")) { HudCarClient.interiorLight(on); ok(on ? "Включаю свет" : "Выключаю свет"); return true; }
         return false;

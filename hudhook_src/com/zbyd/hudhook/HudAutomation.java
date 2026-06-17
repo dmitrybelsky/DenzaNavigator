@@ -31,6 +31,12 @@ public final class HudAutomation {
     public static void onRouteStart() {
         acDone = false; evWarnDone = false; tpmsWarned = false;
         if (HudFlags.on(ctx, HudFlags.AUTOSTART)) { try { HudCarClient.ac(true); HudLog.f("AUTO route-start -> AC on"); } catch (Throwable t) {} }
+        if (HudFlags.on(ctx, HudFlags.SEAT_HEAT)) {            // front seats: driver=1, passenger=2; level HIGH=3
+            try { HudPrivClient.seatHeat(1, 3); HudPrivClient.seatHeat(2, 3); HudLog.f("AUTO route-start -> front seat heat"); } catch (Throwable t) {}
+        }
+        if (HudFlags.on(ctx, HudFlags.WHEEL_HEAT)) {
+            try { HudPrivClient.wheelHeat(true); HudLog.f("AUTO route-start -> wheel heat"); } catch (Throwable t) {}
+        }
     }
 
     /** Rain level 0-14 (BYDAutoSensorDevice.getRainfall). Close windows when it actually rains. */

@@ -74,9 +74,11 @@ public final class HudPrivClient {
         send(sb.toString());
     }
 
-    // Seat comfort (BYDAutoSettingDevice.setSeat{Heating,Ventilating}State(seat, level); seat 1..n, level 0-3).
+    // Seat comfort (BYDAutoSettingDevice.setSeat{Heating,Ventilating}State(seat, level); seat 1..n, level OFF=1/LOW=2/HIGH=3).
     public static void seatHeat(int seat, int level) { setting("setSeatHeatingState", seat, level); }
     public static void seatVent(int seat, int level) { setting("setSeatVentilatingState", seat, level); }
+    // Steering-wheel heat (setSteeringWheelHeatingState: OFF=1, ON=2).
+    public static void wheelHeat(boolean on) { setting("setSteeringWheelHeatingState", on ? 2 : 1); }
 
     /** Write a raw BYD instrument feature-id (hex "0x..") — cluster nav fields (ETA/mileage/trip/safety). */
     public static void fidSet(String hexFid, int val) { send("FIDSET " + hexFid + " " + val); }

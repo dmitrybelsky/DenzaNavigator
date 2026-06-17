@@ -17,13 +17,16 @@ public final class HudFlags {
     public static final String HEADLIGHT  = "auto_headlight";  // tunnel -> auto headlight (unvalidated)
     public static final String EV_WARN    = "auto_evwarn";     // route > range -> spoken warning
     public static final String TPMS       = "auto_tpms";       // low tire -> warning
+    public static final String SEAT_HEAT  = "auto_seatheat";   // front seat heating at route start
+    public static final String WHEEL_HEAT = "auto_wheelheat";  // steering-wheel heating at route start
 
     private static SharedPreferences p(Context c) {
         return c.getApplicationContext().getSharedPreferences("zbyd_hud", Context.MODE_PRIVATE);
     }
 
     public static boolean def(String key) {
-        return AUTOSTART.equals(key) || HEADLIGHT.equals(key) ? false : true;   // autostart/headlight off by default
+        // intrusive/comfort features off by default; safety-positive on
+        return !(AUTOSTART.equals(key) || HEADLIGHT.equals(key) || SEAT_HEAT.equals(key) || WHEEL_HEAT.equals(key));
     }
 
     public static boolean on(Context c, String key) {
