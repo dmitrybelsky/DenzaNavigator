@@ -37,6 +37,9 @@ public final class HudAutomation {
         if (HudFlags.on(ctx, HudFlags.WHEEL_HEAT)) {
             try { HudPrivClient.wheelHeat(true); HudLog.f("AUTO route-start -> wheel heat"); } catch (Throwable t) {}
         }
+        if (HudFlags.on(ctx, HudFlags.PANORAMA)) {            // open panoramic roof
+            try { HudCarClient.sunroof(1); HudLog.f("AUTO route-start -> panorama open"); } catch (Throwable t) {}
+        }
     }
 
     /** Rain level 0-14 (BYDAutoSensorDevice.getRainfall). Close windows when it actually rains. */

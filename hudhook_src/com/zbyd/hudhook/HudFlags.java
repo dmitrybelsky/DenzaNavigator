@@ -19,6 +19,7 @@ public final class HudFlags {
     public static final String TPMS       = "auto_tpms";       // low tire -> warning
     public static final String SEAT_HEAT  = "auto_seatheat";   // front seat heating at route start
     public static final String WHEEL_HEAT = "auto_wheelheat";  // steering-wheel heating at route start
+    public static final String PANORAMA   = "auto_panorama";   // open panoramic roof at route start
 
     private static SharedPreferences p(Context c) {
         return c.getApplicationContext().getSharedPreferences("zbyd_hud", Context.MODE_PRIVATE);
@@ -26,7 +27,8 @@ public final class HudFlags {
 
     public static boolean def(String key) {
         // intrusive/comfort features off by default; safety-positive on
-        return !(AUTOSTART.equals(key) || HEADLIGHT.equals(key) || SEAT_HEAT.equals(key) || WHEEL_HEAT.equals(key));
+        return !(AUTOSTART.equals(key) || HEADLIGHT.equals(key) || SEAT_HEAT.equals(key)
+                || WHEEL_HEAT.equals(key) || PANORAMA.equals(key));
     }
 
     public static boolean on(Context c, String key) {

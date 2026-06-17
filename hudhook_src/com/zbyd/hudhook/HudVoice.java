@@ -57,6 +57,9 @@ public final class HudVoice {
             else { HudPrivClient.seatHeat(1, tOn ? 3 : 1); HudPrivClient.seatHeat(2, tOn ? 3 : 1); ok(tOn ? "Включаю подогрев сидений" : "Выключаю подогрев сидений"); }
             return true;
         }
+        if ((tOn || tOff) && has(s, "старт", "автозапуск") && has(s, "панорам", "люк")) {
+            HudFlags.set(sCtx, HudFlags.PANORAMA, tOn); ok(tOn ? "Открытие панорамы на старте включено" : "Открытие панорамы на старте выключено"); return true;
+        }
         boolean open  = has(s, "открой", "подними", "опусти", "включи", "разблокир");
         boolean close = has(s, "закрой", "выключи", "заблокир");
         if (!open && !close) {
