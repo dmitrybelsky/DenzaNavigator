@@ -19,9 +19,47 @@ import java.io.OutputStream;
  */
 public final class HudCarClient {
 
-    private static final String SOCK = "zbyd_auto";
+    private static final String SOCK = "zbyd_auto";             // AutoHelper daemon (runs as com.byd.cameraautostudy uid)
     private static final double CAPACITY_KWH = 100.0;            // Denza N9 pack (configurable)
     private static final double DEFAULT_CONS = 18.0;            // kWh/100km until first delta
+
+    // BYDAuto device classes (mDeviceType validated live on N9). High-level HAL via the perm-holding daemon.
+    static final String CLS_AC    = "android.hardware.bydauto.ac.BYDAutoAcDevice";            // 1000
+    static final String CLS_BODY  = "android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice"; // 1001
+    static final String CLS_LIGHT = "android.hardware.bydauto.light.BYDAutoLightDevice";       // 1004
+    static final String CLS_INSTR = "android.hardware.bydauto.instrument.BYDAutoInstrumentDevice"; // 1007
+    static final String CLS_TYRE  = "android.hardware.bydauto.tyre.BYDAutoTyreDevice";          // 1016
+    static final String CLS_LOCK  = "android.hardware.bydauto.doorlock.BYDAutoDoorLockDevice";  // 1041
+
+    /** Call a high-level HAL setter/getter on the daemon: "HAL <class> <method> [args]" -> int ret (-999 fail). */
+    static int hal(String cls, String method, int... args) {
+        StringBuilder sb = new StringBuilder("HAL ").append(cls).append(' ').append(method);
+        for (int a : args) sb.append(' ').append(a);
+        String r = req(sb.toString());
+        if (r == null || !r.startsWith("OK")) return -999;
+        int i = r.indexOf("ret="); if (i < 0) return -999;
+        try { return Integer.parseInt(r.substring(i + 4).trim().split("\\s+")[0]); } catch (Throwable t) { return -999; }
+    }
+    /** Raw feature-id write on a device class via the daemon: "DSET <class> <fid> <val>". */
+    static int dset(String cls, int fid, int val) {
+        String r = req("DSET " + cls + " " + fid + " " + val);
+        if (r == null || !r.startsWith("OK")) return -999;
+        int i = r.indexOf("ret="); if (i < 0) return -999;
+        try { return Integer.parseInt(r.substring(i + 4).trim().split("\\s+")[0]); } catch (Throwable t) { return -999; }
+    }
+    /** Raw feature-id read on a device class via the daemon: "RGET <class> <fid>" -> int. */
+    static int rget(String cls, int fid) {
+        String r = req("RGET " + cls + " " + fid);
+        try { return r != null && r.startsWith("OK") ? Integer.parseInt(r.substring(3).trim().split("\\s+")[0]) : -999; }
+        catch (Throwable t) { return -999; }
+    }
+    private static String clsOf(int dev) {
+        switch (dev) {
+            case 1000: return CLS_AC;   case 1001: return CLS_BODY;  case 1004: return CLS_LIGHT;
+            case 1007: return CLS_INSTR; case 1016: return CLS_TYRE; case 1041: return CLS_LOCK;
+            default:   return CLS_BODY;
+        }
+    }
 
     private static volatile int sSoc = -1;
     private static volatile double sMileage, sTotalElec, sCons = DEFAULT_CONS, sRangeKm;
@@ -50,25 +88,23 @@ public final class HudCarClient {
     };
 
     private static void pollEv() {
-        String r = req("EV");
-        if (r == null || !r.startsWith("OK")) return;
-        int soc = (int) val(r, "soc=");
-        double mileage = val(r, "mileage="), elec = val(r, "total_elec=");
+        int soc = hal(CLS_INSTR, "getBatteryPercent");          // live SOC % (instrument, perm-path)
+        if (soc < 0 || soc > 100) return;                       // -999 fail / out of range
+        int mi = hal(CLS_INSTR, "getCurrentJourneyDriveMileage"); // trip km (best-effort for journal)
+        double mileage = mi > 0 ? mi : sMileage, elec = 0;
         if (soc >= 0) sSoc = soc;
         if (mileage > 0) sMileage = mileage;
-        if (elec > 0) sTotalElec = elec;
         // rolling consumption from deltas (need movement + energy used)
         if (sPrevMileage > 0 && mileage > sPrevMileage + 0.5 && elec > sPrevElec) {
             double cons = (elec - sPrevElec) / (mileage - sPrevMileage) * 100.0;   // kWh/100km
             if (cons > 5 && cons < 60) sCons = 0.7 * sCons + 0.3 * cons;           // smoothed
         }
-        int ign = (int) val(r, "ign=");
         boolean parked = sPrevMileage > 0 && Math.abs(mileage - sPrevMileage) < 0.1;
-        // charge session: SOC rising while parked / ignition off
-        if (soc > sPrevSoc && sPrevSoc >= 0 && (parked || ign == 0)) {
+        // charge session: SOC rising while parked (no ignition signal -> use mileage-stationary)
+        if (soc > sPrevSoc && sPrevSoc >= 0 && parked) {
             if (!sCharging) { sCharging = true; sChgStartTs = System.currentTimeMillis(); sChgStartSoc = sPrevSoc; sChgStartElec = elec; }
             sChgLastTs = System.currentTimeMillis();
-        } else if (sCharging && (soc < sPrevSoc || ign == 1 || System.currentTimeMillis() - sChgLastTs > 600000)) {
+        } else if (sCharging && (soc < sPrevSoc || System.currentTimeMillis() - sChgLastTs > 600000)) {
             logCharge(soc); sCharging = false;
         }
         if (soc >= 0) sPrevSoc = soc;
@@ -80,14 +116,13 @@ public final class HudCarClient {
         announceOnce();
     }
 
-    // ---- TPMS (4 tire pressures via autoservice; BYDMate dev=1001, 4th fid guessed) ----------
-    private static final int[] TPMS_FID = {947912728, 947912736, 947912744, 947912752};   // LF,LR,RF,RR
+    // ---- TPMS (BYDAutoTyreDevice.getTyrePressureValue(area 1..4 = LF/RF/LR/RR), value 0-4094) ----
     private static final int[] sTpms = {0, 0, 0, 0};
     public static int[] tpms() { return sTpms; }
     private static long sTpmsTs;
     private static void pollTpms() {
         if (System.currentTimeMillis() - sTpmsTs < 60000) return; sTpmsTs = System.currentTimeMillis();
-        for (int i = 0; i < 4; i++) { int p = read(1001, TPMS_FID[i]); if (p > 50 && p < 600) sTpms[i] = p; }
+        for (int i = 0; i < 4; i++) { int p = hal(CLS_TYRE, "getTyrePressureValue", i + 1); if (p > 50 && p < 600) sTpms[i] = p; }
     }
 
     // ---- charge journal -----------------------------------------------------------------------
@@ -135,29 +170,28 @@ public final class HudCarClient {
         catch (Throwable t) {}
     }
 
-    // ---- car control (autoservice writes via the shell helper) ------------------------------
-    public static int write(int dev, int fid, int value) {
-        String r = req("W " + dev + " " + fid + " " + value);
-        try { return r != null && r.startsWith("OK") ? Integer.parseInt(r.substring(3).trim()) : -1; }
-        catch (Throwable t) { return -1; }
-    }
-    public static int read(int dev, int fid) {
-        String r = req("R " + dev + " " + fid);
-        try { return r != null && r.startsWith("OK") ? Integer.parseInt(r.substring(3).trim()) : -999; }
-        catch (Throwable t) { return -999; }
-    }
+    // ---- car control (high-level HAL via the privileged daemon; raw fid via DSET/RGET) -------
+    /** Raw fid write, dev number -> device class. Routes through the perm-holding daemon (actuates on N9). */
+    public static int write(int dev, int fid, int value) { return dset(clsOf(dev), fid, value); }
+    public static int read(int dev, int fid)             { return rget(clsOf(dev), fid); }
 
-    // Convenience controls (BYDMate live-validated dev/fid — verify on N9 before trusting).
-    public static void ac(boolean on)        { write(1000, on ? 501219352 : 501219364, on ? 0 : 1); }
-    public static void acTemp(int celsius)   { write(1000, 501219368, Math.max(16, Math.min(30, celsius))); }
-    public static void windowDriver(boolean open)    { write(1001, 1125122104, open ? 1 : 2); }
-    public static void windowPassenger(boolean open) { write(1001, 1125122107, open ? 1 : 2); }
-    // DEAD on N9: raw autoservice write doesn't actuate + N9 has no opening moonroof (fixed glass + shades).
-    // Use HudPrivClient.sunshade()/rearSunshade() (agent high-level HAL path, validated live). Kept for Leopard3.
-    @Deprecated public static void sunroof(int op) { write(1001, 1125122056, op); }   // 1 open/2 close/4 stop
-    public static void interiorLight(boolean on)     { write(1023, 1330643002, on ? 2 : 1); }
-    public static void ambientLight(boolean on)      { write(1023, 1069547536, on ? 5 : 1); }
-    public static void lockDoors(boolean lock)       { write(1001, 1276141590, lock ? 2 : 1); }
+    // Convenience controls. HAL method args validated against N9 framework (BYDAutoBodyworkDevice etc).
+    // Windows: setBodyWindowCtrlState(window 1=LF/2=RF/3=LR/4=RR, action 1=OPEN/2=CLOSE/3=STOP/4=HALF).
+    public static void windowDriver(boolean open)    { hal(CLS_BODY, "setBodyWindowCtrlState", 1, open ? 1 : 2); }
+    public static void windowPassenger(boolean open) { hal(CLS_BODY, "setBodyWindowCtrlState", 2, open ? 1 : 2); }
+    public static void window(int win, boolean open) { hal(CLS_BODY, "setBodyWindowCtrlState", win, open ? 1 : 2); }
+    /** Trunk/tailgate: setHetchDoorStatus(1=open/2=close). */
+    public static void trunk(boolean open)           { hal(CLS_BODY, "setHetchDoorStatus", open ? 1 : 2); }
+    // Panorama = electric sunshades on N9 (no opening glass). See HudPrivClient.sunshade()/rearSunshade().
+    @Deprecated public static void sunroof(int op)   { hal(CLS_BODY, "voiceCtlMoonRoof", op); }
+
+    // AC / lights / locks: high-level method or raw fid unverified on N9 -> routed through daemon, tune live.
+    // AC on/off via control-mode (0=AUTO ~ on, 1=MANUAL); temp via setAcTemperature(zone,temp,src,unit=1 °C).
+    public static void ac(boolean on)        { hal(CLS_AC, "setAcControlMode", 0, on ? 0 : 1); }
+    public static void acTemp(int celsius)   { hal(CLS_AC, "setAcTemperature", 0, Math.max(17, Math.min(33, celsius)), 0, 1); }
+    public static void interiorLight(boolean on) { dset(CLS_LIGHT, 1330643002, on ? 2 : 1); }   // fid Leopard3; verify on N9
+    public static void ambientLight(boolean on)  { dset(CLS_LIGHT, 1069547536, on ? 5 : 1); }
+    public static void lockDoors(boolean lock)   { dset(CLS_LOCK, 515647, lock ? 2 : 1); }       // SET_CAR_DOOR_LOCK_SET
 
     // ---- socket plumbing --------------------------------------------------------------------
     private static volatile LocalSocket sSock;

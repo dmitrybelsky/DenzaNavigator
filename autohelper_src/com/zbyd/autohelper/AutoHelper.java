@@ -45,9 +45,10 @@ public final class AutoHelper {
 
     public static void main(String[] args) {
         try {
-            if (!connect()) { System.out.println("ERR no autoservice"); return; }
+            boolean once = args != null && args.length >= 2 && "once".equals(args[0]);
+            if (!connect() && once) { System.out.println("ERR no autoservice"); return; }   // HAL/DSET don't need raw autoservice
             // one-shot test mode: `app_process ... AutoHelper once <cmd...>` -> run once, print, exit
-            if (args != null && args.length >= 2 && "once".equals(args[0])) {
+            if (once) {
                 StringBuilder sb = new StringBuilder();
                 for (int i = 1; i < args.length; i++) { if (i > 1) sb.append(' '); sb.append(args[i]); }
                 System.out.println(dispatch(sb.toString()));
@@ -56,9 +57,11 @@ public final class AutoHelper {
                 Runtime.getRuntime().halt(0);            // looper/binder threads keep JVM alive; force-exit
                 return;
             }
+            // daemon mode: run as com.byd.cameraautostudy uid (run-as) -> @zbyd_auto is privileged.
             if (args != null && args.length > 0) try { TX_READ = Integer.parseInt(args[0]); } catch (Throwable e) {}
+            ctx();                                        // pre-acquire system context for HAL/DSET (cached)
             LocalServerSocket srv = new LocalServerSocket(SOCK);
-            log("listening @" + SOCK);
+            log("daemon listening @" + SOCK + " uid=" + android.os.Process.myUid());
             while (true) {
                 try { handle(srv.accept()); } catch (Throwable t) { log("accept: " + t); }
             }
@@ -100,13 +103,14 @@ public final class AutoHelper {
                     svc.transact(tx, d, rp, 0); return "OK " + (rp.dataAvail() >= 4 ? rp.readInt() : -999);
                 } finally { rp.recycle(); d.recycle(); }
             }
-            if ("SEND".equals(p[0])) {                                   // SEND <abstractSocket> <message...>
+            if ("SEND".equals(p[0])) {                                   // SEND <abstractSocket> <message...> -> reply line
                 String msg = line.substring(line.indexOf(p[2]));
                 android.net.LocalSocket ls = new android.net.LocalSocket();
                 ls.connect(new android.net.LocalSocketAddress(p[1], android.net.LocalSocketAddress.Namespace.ABSTRACT));
                 ls.getOutputStream().write((msg + "\n").getBytes("UTF-8")); ls.getOutputStream().flush();
+                String reply = new BufferedReader(new InputStreamReader(ls.getInputStream())).readLine();
                 try { ls.close(); } catch (Throwable e) {}
-                return "OK sent to @" + p[1];
+                return "REPLY " + reply;
             }
             if ("HAL".equals(p[0])) {                                    // HAL <fqDeviceClass> <method> [int args...]
                 Context c = ctx();
@@ -121,6 +125,20 @@ public final class AutoHelper {
                 if (m == null) return "ERR no method " + p[2];
                 m.setAccessible(true);
                 return "OK uid=" + android.os.Process.myUid() + " ret=" + m.invoke(dev, av);
+            }
+            if ("RGET".equals(p[0])) {                                   // RGET <fqDeviceClass> <fid> — raw fid read via protected get(dev,fid)
+                Context c = ctx();
+                Class<?> k = Class.forName(p[1]);
+                Object dev = k.getMethod("getInstance", Context.class).invoke(null, c);
+                int devType = 0;
+                for (Class<?> cc = k; cc != null; cc = cc.getSuperclass())
+                    try { java.lang.reflect.Field f = cc.getDeclaredField("mDeviceType"); f.setAccessible(true); devType = f.getInt(dev); break; } catch (Throwable e) {}
+                java.lang.reflect.Method m = null;
+                for (Class<?> cc = k; cc != null && m == null; cc = cc.getSuperclass())
+                    try { m = cc.getDeclaredMethod("get", int.class, int.class); } catch (Throwable e) {}
+                if (m == null) return "ERR no get(ii)";
+                m.setAccessible(true);
+                return "OK " + m.invoke(dev, devType, Integer.parseInt(p[2]));
             }
             if ("DSET".equals(p[0])) {                                   // DSET <fqDeviceClass> <fid> <value> — raw fid via protected set(dev,fid,val) w/ HAL perm
                 Context c = ctx();
@@ -181,16 +199,18 @@ public final class AutoHelper {
         finally { if (db != null) try { db.close(); } catch (Throwable e) {} }
     }
 
-    /** Acquire a system Context from app_process (no Application). Needed by BYDAuto*Device.getInstance. */
-    private static Context ctx() {
+    private static Context CTX;
+    /** Acquire (once, cached) a system Context from app_process. Needed by BYDAuto*Device.getInstance. */
+    private static synchronized Context ctx() {
+        if (CTX != null) return CTX;
         try {
             Class<?> at = Class.forName("android.app.ActivityThread");
             try { Class.forName("android.os.Looper").getMethod("prepareMainLooper").invoke(null); } catch (Throwable e) {}
             Object th = at.getMethod("systemMain").invoke(null);
-            Context c = (Context) at.getMethod("getSystemContext").invoke(th);
-            log("ctx ok " + c);
-            return c;
-        } catch (Throwable t) { log("ctx fail: " + t); return null; }
+            CTX = (Context) at.getMethod("getSystemContext").invoke(th);
+            log("ctx ok " + CTX);
+        } catch (Throwable t) { log("ctx fail: " + t); }
+        return CTX;
     }
 
     private static void log(String m) {
