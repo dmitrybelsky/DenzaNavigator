@@ -1,25 +1,16 @@
 package com.zbyd.hudhook;
 
 import android.content.Context;
-import android.net.LocalSocket;
-import android.net.LocalSocketAddress;
 import android.os.Handler;
 import android.os.HandlerThread;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-
 /**
- * Client to the shell-uid autoservice helper (AutoHelper @zbyd_auto). Pulls BYD EV telemetry
- * (SOC / odometer / lifetime kWh from energydata.db) — which a normal app can't read — computes
- * consumption + estimated range, and issues car-control writes (climate/lights/windows, dev/fid
- * reversed by BYDMate) that the per-app BYDAUTO_*_SET signature wall would otherwise block. No-op
- * (back-off) when the helper isn't running.
+ * EV telemetry + car-control facade. Reads (SOC / range / TPMS) and writes (climate/lights/windows/
+ * locks) are delegated to the privileged HudPrivAgent over the {@link HudBridge} /sdcard queue — the
+ * agent runs in a process that holds the signature BYDAUTO_*_SET/_GET perms a re-signed app lacks.
  */
 public final class HudCarClient {
 
-    private static final String SOCK = "zbyd_auto";             // AutoHelper daemon (runs as com.byd.cameraautostudy uid)
     private static final double CAPACITY_KWH = 100.0;            // Denza N9 pack (configurable)
     private static final double DEFAULT_CONS = 18.0;            // kWh/100km until first delta
 
@@ -31,28 +22,16 @@ public final class HudCarClient {
     static final String CLS_TYRE  = "android.hardware.bydauto.tyre.BYDAutoTyreDevice";          // 1016
     static final String CLS_LOCK  = "android.hardware.bydauto.doorlock.BYDAutoDoorLockDevice";  // 1041
 
-    /** Call a high-level HAL setter/getter on the daemon: "HAL <class> <method> [args]" -> int ret (-999 fail). */
+    /** High-level HAL setter/getter via the agent (file bridge): "HAL <class> <method> [args]" -> int ret. */
     static int hal(String cls, String method, int... args) {
         StringBuilder sb = new StringBuilder("HAL ").append(cls).append(' ').append(method);
         for (int a : args) sb.append(' ').append(a);
-        String r = req(sb.toString());
-        if (r == null || !r.startsWith("OK")) return -999;
-        int i = r.indexOf("ret="); if (i < 0) return -999;
-        try { return Integer.parseInt(r.substring(i + 4).trim().split("\\s+")[0]); } catch (Throwable t) { return -999; }
+        return HudBridge.ret(HudBridge.call(sb.toString(), 1500), -999);
     }
-    /** Raw feature-id write on a device class via the daemon: "DSET <class> <fid> <val>". */
-    static int dset(String cls, int fid, int val) {
-        String r = req("DSET " + cls + " " + fid + " " + val);
-        if (r == null || !r.startsWith("OK")) return -999;
-        int i = r.indexOf("ret="); if (i < 0) return -999;
-        try { return Integer.parseInt(r.substring(i + 4).trim().split("\\s+")[0]); } catch (Throwable t) { return -999; }
-    }
-    /** Raw feature-id read on a device class via the daemon: "RGET <class> <fid>" -> int. */
-    static int rget(String cls, int fid) {
-        String r = req("RGET " + cls + " " + fid);
-        try { return r != null && r.startsWith("OK") ? Integer.parseInt(r.substring(3).trim().split("\\s+")[0]) : -999; }
-        catch (Throwable t) { return -999; }
-    }
+    /** Raw feature-id write on a device class via the agent (fire-and-forget): "DSET <class> <fid> <val>". */
+    static int dset(String cls, int fid, int val) { HudBridge.send("DSET " + cls + " " + fid + " " + val); return 0; }
+    /** Raw feature-id read on a device class via the agent: "RGET <class> <fid>" -> int. */
+    static int rget(String cls, int fid) { return HudBridge.ret(HudBridge.call("RGET " + cls + " " + fid, 1500), -999); }
     private static String clsOf(int dev) {
         switch (dev) {
             case 1000: return CLS_AC;   case 1001: return CLS_BODY;  case 1004: return CLS_LIGHT;
@@ -193,47 +172,4 @@ public final class HudCarClient {
     public static void ambientLight(boolean on)  { dset(CLS_LIGHT, 1069547536, on ? 5 : 1); }
     public static void lockDoors(boolean lock)   { dset(CLS_LOCK, 515647, lock ? 2 : 1); }       // SET_CAR_DOOR_LOCK_SET
 
-    // ---- socket plumbing --------------------------------------------------------------------
-    private static volatile LocalSocket sSock;
-    private static volatile OutputStream sOut;
-    private static volatile BufferedReader sIn;
-    private static long sLastTry;
-    private static int sLog;
-
-    private static synchronized String req(String cmd) {
-        if (!connect()) return null;
-        try {
-            sOut.write((cmd + "\n").getBytes("UTF-8")); sOut.flush();
-            return sIn.readLine();
-        } catch (Throwable t) { close(); return null; }
-    }
-
-    private static boolean connect() {
-        if (sOut != null) return true;
-        long now = System.currentTimeMillis();
-        if (now - sLastTry < 5000) return false;
-        sLastTry = now;
-        try {
-            LocalSocket s = new LocalSocket();
-            s.connect(new LocalSocketAddress(SOCK, LocalSocketAddress.Namespace.ABSTRACT));
-            sSock = s; sOut = s.getOutputStream();
-            sIn = new BufferedReader(new InputStreamReader(s.getInputStream()));
-            HudLog.f("HudCarClient connected @" + SOCK);
-            return true;
-        } catch (Throwable t) { if (sLog++ < 3) HudLog.f("HudCarClient no helper @" + SOCK); return false; }
-    }
-
-    private static void close() {
-        try { sSock.close(); } catch (Throwable e) {}
-        sSock = null; sOut = null; sIn = null;
-    }
-
-    private static double val(String s, String key) {
-        try {
-            int i = s.indexOf(key); if (i < 0) return -1;
-            int j = i + key.length(), k = j;
-            while (k < s.length() && s.charAt(k) != ' ') k++;
-            return Double.parseDouble(s.substring(j, k));
-        } catch (Throwable t) { return -1; }
-    }
 }

@@ -49,17 +49,26 @@ adb shell appops set com.byd.cameraautostudy MANAGE_EXTERNAL_STORAGE allow
 adb shell appops set ru.yandex.yandexnavi    MANAGE_EXTERNAL_STORAGE allow
 ```
 
-### Команды через файл-мост (`/sdcard/zbyd/cmd` → reply `/sdcard/zbyd/reply`)
+### Команды через файл-мост (dir-queue: `/sdcard/zbyd/req/<id>.cmd` → reply `/sdcard/zbyd/res/<id>.res`)
+Клиент (`HudBridge`) атомарно публикует `req/<pid_seq>.tmp`→`.cmd`; агент исполняет + пишет `res/<id>.res`
+(мультиклиент, без затирания). `HudBridge.send()` — fire-and-forget; `HudBridge.call()` — ждёт reply.
+
 | Команда | Действие |
 |---|---|
-| `BODY <method> [intargs]` | BYDAutoBodyworkDevice.<method> (`setSunshadeState 0..100`, `setHetchDoorStatus 1/2`, `setBodyWindowCtrlState <win> <act>`, `getMoonRoofConfig`…) |
-| `BODYFID <fid> <val>` | raw fid на bodywork (dev 1001) — напр. задняя шторка `1276178472` |
+| `HAL <fqClass> <method> [intargs]` | любой BYDAuto*Device метод (сеттер или геттер) — `ret=` в reply |
+| `DSET <fqClass> <fid> <val>` | raw fid write на любом устройстве |
+| `RGET <fqClass> <fid>` | raw fid read |
+| `BODY <method> [intargs]` | BYDAutoBodyworkDevice (`setSunshadeState 0..100`, `setHetchDoorStatus 1/2`, `setBodyWindowCtrlState <win> <act>`, `getMoonRoofConfig`…) |
+| `BODYFID <fid> <val>` | raw fid на bodywork (dev 1001) — задняя шторка `1276178472` |
 | `SETTING <method> [intargs]` | BYDAutoSettingDevice (`setSeatHeatingState`, `setSteeringWheelHeatingState`…) |
 | `FIDSET <fid> <val>` | raw fid на instrument (dev 1007) — HUD-кластер поля |
 | `CLUSTER <turn> <dist> [road]` | нав-инфо на приборку |
 
 ```bash
-echo 'BODY setSunshadeState 100' > /sdcard/zbyd/cmd   # -> reply: BODY setSunshadeState [100] ret=0  (шторка открылась)
+# ручной тест из adb shell:
+mkdir -p /sdcard/zbyd/req
+printf 'BODY setSunshadeState 100\n' > /sdcard/zbyd/req/t.tmp && mv /sdcard/zbyd/req/t.tmp /sdcard/zbyd/req/t.cmd
+sleep 1; cat /sdcard/zbyd/res/t.res        # -> BODY setSunshadeState [100] ret=0  (передняя шторка открылась)
 ```
 
 ---

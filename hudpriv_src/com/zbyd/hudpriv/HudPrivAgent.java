@@ -141,8 +141,38 @@ public final class HudPrivAgent {
                     Object ret = m.invoke(dev, args);
                     logN("BODY " + q[1] + " " + java.util.Arrays.toString(args) + " ret=" + ret);
                 }
+            } else if ("HAL".equals(cmd)) {                             // HAL <fqClass> <method> [int args...] — any device, write or getter
+                String[] q = line.trim().split("\\s+");
+                Object dev = devByClass(q[1]);
+                int n = q.length - 3;
+                Class<?>[] sig = new Class<?>[n]; Object[] args = new Object[n];
+                for (int i = 0; i < n; i++) { sig[i] = int.class; args[i] = Integer.parseInt(q[3 + i]); }
+                Method m = findMethod(dev.getClass(), q[2], sig);
+                logN("HAL " + q[2] + " ret=" + m.invoke(dev, args));
+            } else if ("DSET".equals(cmd)) {                            // DSET <fqClass> <fid> <val> — raw fid write on any device
+                writeFidOn(devByClass(p[1]), parseFid(p[2]), Integer.parseInt(line.trim().split("\\s+")[3]));
+            } else if ("RGET".equals(cmd)) {                            // RGET <fqClass> <fid> — raw fid read on any device
+                Object dev = devByClass(p[1]);
+                int dt = devType(dev);
+                Method g = findMethod(dev.getClass(), "get", int.class, int.class);
+                logN("RGET ret=" + g.invoke(dev, dt, parseFid(p[2])));
             }
-        } catch (Throwable e) { log("dispatch fail [" + line + "]: " + e); }
+        } catch (Throwable e) { log("dispatch fail [" + line + "]: " + e); lastReply = "ERR " + e; }
+    }
+
+    private static final java.util.HashMap<String, Object> DEVS = new java.util.HashMap<String, Object>();
+    /** getInstance(ctx) for any BYDAuto*Device class, cached. */
+    private static synchronized Object devByClass(String cn) throws Exception {
+        Object d = DEVS.get(cn);
+        if (d == null) { d = Class.forName(cn).getMethod("getInstance", Context.class).invoke(null, ctx); DEVS.put(cn, d); }
+        return d;
+    }
+    private static int devType(Object dev) {
+        java.lang.reflect.Field f = findField(dev.getClass(), "mDeviceType");
+        try { return f != null ? f.getInt(dev) : 0; } catch (Throwable e) { return 0; }
+    }
+    private static int parseFid(String s) {
+        return s.toLowerCase().startsWith("0x") ? (int) Long.parseLong(s.substring(2), 16) : Integer.parseInt(s);
     }
 
     /** Write a BYD instrument feature-id directly: BYDAutoInstrumentDevice.set(mDeviceType, fid, value).
@@ -188,22 +218,37 @@ public final class HudPrivAgent {
 
     /** Cross-domain command channel for the re-signed Yandex (untrusted_app): the agent's abstract socket is
      *  SELinux-unreachable from untrusted_app, but /sdcard (mlstrustedobject, MLS-exempt) is shared and this
-     *  app holds MANAGE_EXTERNAL_STORAGE. Yandex atomically renames cmd.tmp->cmd; we exec + write reply. */
+     *  app holds MANAGE_EXTERNAL_STORAGE. Directory queue (multi-client, no overwrite): a client atomically
+     *  publishes req/<seq>.cmd; we execute it and write res/<seq>.res, then delete the request. */
     private static void fileBridge() {
-        java.io.File dir = new java.io.File("/sdcard/zbyd");
-        try { dir.mkdirs(); } catch (Throwable e) {}
-        java.io.File cmd = new java.io.File(dir, "cmd"), rep = new java.io.File(dir, "reply"), repTmp = new java.io.File(dir, "reply.tmp");
-        log("fileBridge start dir=" + dir + " writable=" + dir.canWrite());
+        java.io.File req = new java.io.File("/sdcard/zbyd/req"), res = new java.io.File("/sdcard/zbyd/res");
+        try { req.mkdirs(); res.mkdirs(); } catch (Throwable e) {}
+        log("fileBridge start req=" + req + " writable=" + req.canWrite());
+        long lastReap = 0;
         while (true) {
             try {
-                if (cmd.exists()) {
-                    String line = new BufferedReader(new InputStreamReader(new java.io.FileInputStream(cmd))).readLine();
-                    cmd.delete();
-                    String reply = line != null ? runAndReply(line.trim()) : "ERR empty";
-                    FileWriter w = new FileWriter(repTmp); w.write(reply + "\n"); w.close();
-                    repTmp.renameTo(rep);                         // atomic publish
+                long now = System.currentTimeMillis();
+                if (now - lastReap > 5000) {                      // reap replies the client never read (fire-and-forget)
+                    lastReap = now;
+                    java.io.File[] old = res.listFiles();
+                    if (old != null) for (java.io.File f : old) if (now - f.lastModified() > 5000) f.delete();
                 }
-                Thread.sleep(250);
+                String[] names = req.list();
+                if (names != null && names.length > 0) {
+                    java.util.Arrays.sort(names);                 // FIFO-ish by seq
+                    for (String nm : names) {
+                        if (!nm.endsWith(".cmd")) continue;
+                        java.io.File rf = new java.io.File(req, nm);
+                        String line = new BufferedReader(new InputStreamReader(new java.io.FileInputStream(rf))).readLine();
+                        rf.delete();
+                        String reply = line != null ? runAndReply(line.trim()) : "ERR empty";
+                        String base = nm.substring(0, nm.length() - 4);
+                        java.io.File tmp = new java.io.File(res, base + ".tmp"), out = new java.io.File(res, base + ".res");
+                        FileWriter w = new FileWriter(tmp); w.write(reply + "\n"); w.close();
+                        tmp.renameTo(out);                        // atomic publish
+                    }
+                }
+                Thread.sleep(120);
             } catch (Throwable e) { log("fileBridge: " + e); try { Thread.sleep(1000); } catch (Throwable e2) {} }
         }
     }

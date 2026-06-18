@@ -1,44 +1,13 @@
 package com.zbyd.hudhook;
 
-import java.io.File;
-import java.io.FileWriter;
-
 /**
- * Client to the privileged HUD agent (HudPrivAgent), injected via JDWP into com.byd.cameraautostudy
- * (platform_app; holds BYDAUTO_INSTRUMENT_SET / BODYWORK_SET / SETTING_SET). The re-signed Yandex
- * (untrusted_app) can't write the cluster/body itself (signature perm) AND can't reach the agent's
- * abstract socket (SELinux denies untrusted_app -> platform_app connectto). So commands cross the
- * domain barrier via a /sdcard FILE BRIDGE: /sdcard is mlstrustedobject (MLS-exempt) and both sides
- * hold MANAGE_EXTERNAL_STORAGE (granted once via `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow`).
- * We atomically publish each command (tmp -> rename); the agent polls, executes with its UID, replies.
- * No-op when the bridge dir isn't writable (phone, or before grant).
+ * Thin facade over {@link HudBridge} for privileged cluster/HUD/body commands. The agent (HudPrivAgent
+ * in com.byd.cameraautostudy) executes them with its signature-permitted UID. Transport is the /sdcard
+ * directory queue — see HudBridge.
  */
 public final class HudPrivClient {
 
-    private static final File DIR = new File("/sdcard/zbyd");
-    private static final File CMD = new File(DIR, "cmd");
-    private static final File CMD_TMP = new File(DIR, "cmd.tmp");
-    private static volatile boolean sReady, sChecked;
-    private static int sLog;
-
-    private static synchronized boolean ready() {
-        if (sChecked) return sReady;
-        sChecked = true;
-        try { DIR.mkdirs(); sReady = DIR.canWrite() || DIR.exists(); }
-        catch (Throwable t) { sReady = false; }
-        HudLog.f("HudPrivClient bridge " + DIR + " ready=" + sReady);
-        return sReady;
-    }
-
-    private static synchronized void send(String line) {
-        if (!ready()) return;
-        try {
-            FileWriter w = new FileWriter(CMD_TMP); w.write(line + "\n"); w.close();
-            CMD_TMP.renameTo(CMD);                                // atomic publish; agent polls + executes
-        } catch (Throwable t) {
-            if (sLog++ < 3) HudLog.f("HudPrivClient bridge write fail: " + t);
-        }
-    }
+    private static void send(String line) { HudBridge.send(line); }
 
     public static void cluster(int turnType, int distM, String road) {
         String r = (road == null || road.isEmpty()) ? "" : " " + road.replace('\n', ' ').replace('\r', ' ');
