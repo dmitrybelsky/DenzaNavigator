@@ -46,8 +46,14 @@ public final class BootstrapService extends Service {
         stopSelf();
     }
 
-    /** Re-inject the privileged agent (HudPrivAgent.dex) into cameraautostudy via JDWP-over-ADB. */
+    /** Re-inject the privileged agent (HudPrivAgent.dex) into cameraautostudy via JDWP-over-ADB.
+     *  The dex persists in /data/local/tmp across reboot (last PC deploy); cameraautostudy (platform_app)
+     *  reads those bytes for the in-memory load. MANAGE_EXTERNAL_STORAGE is (re-)granted so the /sdcard
+     *  file bridge works. The app is poked with a config change (cmd uimode) so its MAIN thread dispatches
+     *  a Handler message -> a thread suspended at a Java safe point for the injector. */
     private void injectAgent() throws Exception {
+        sh("appops set " + CAMERA + " MANAGE_EXTERNAL_STORAGE allow");
+        sh("appops set ru.yandex.yandexnavi MANAGE_EXTERNAL_STORAGE allow");
         String pid = sh("pidof " + CAMERA).trim();
         if (pid.isEmpty()) { sh("am start -n " + CAMERA + "/.CameraAutoStudyTest"); Thread.sleep(1500); pid = sh("pidof " + CAMERA).trim(); }
         if (pid.isEmpty()) { log("no " + CAMERA + " pid"); return; }
@@ -55,10 +61,12 @@ public final class BootstrapService extends Service {
         final boolean[] done = {false};
         Thread poke = new Thread(new Runnable() { @Override public void run() {
             try { AdbClient pc = new AdbClient(getFilesDir()); pc.connect(HOST, PORT);
+                boolean night = false;
                 while (!done[0]) {
-                    try { AdbClient.AdbStream ps = pc.open("shell:am start -n " + CAMERA + "/.CameraAutoStudyTest");
+                    night = !night;
+                    try { AdbClient.AdbStream ps = pc.open("shell:cmd uimode night " + (night ? "yes" : "no"));
                           while (ps.readChunk() != null) {} } catch (Throwable t) {}
-                    Thread.sleep(800);
+                    Thread.sleep(700);
                 }
             } catch (Throwable t) {}
         }}, "zbyd-poke");
@@ -66,7 +74,7 @@ public final class BootstrapService extends Service {
         try {
             AdbClient jc = new AdbClient(getFilesDir()); jc.connect(HOST, PORT);
             AdbClient.AdbStream js = jc.open("jdwp:" + fpid);
-            String r = new JdwpInject(js).inject("/data/local/tmp/HudPrivAgent.dex", "/data/local/tmp/zbyd-odex", "com.zbyd.hudpriv.HudPrivAgent");
+            String r = new JdwpInject(js).inject("/data/local/tmp/HudPrivAgent.dex", null, "com.zbyd.hudpriv.HudPrivAgent");
             log("agent inject: " + r);
         } finally { done[0] = true; }
     }
