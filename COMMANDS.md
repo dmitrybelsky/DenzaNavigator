@@ -106,6 +106,45 @@ EOF'"
 
 ---
 
+## 🛰️ NOA по маршруту Яндекса (легитимный HD-путь) — `HudFlags.ADAS_NOA`, default **ON**
+
+> Полный reverse-engineering: **`docs/NOA_ROUTE_FEED.md`** (формат deep-link, coordinateType, file:line).
+
+Отдаём Amap пункт назначения + плотные waypoints из полилинии Яндекса через deep-link
+`bydautomap://route` → Amap строит **настоящий** HD-маршрут → штатный NOA ведёт по нему. НЕ синтетика
+(её ADAS отвергает по CRC) — Amap сам валидный продюсер. `HudNoa.followRoute` (`HudEvents.java:341`),
+опрос 1с, change-gate (шлём только при изменении маршрута).
+
+Формат (верифицирован producer `NaviProxy` + parser `m1.java`):
+```
+bydautomap://route?sourceApplication=<pkg>&data={"coordinateType":1,
+  "destination":{"name":..,"latitude":..,"longitude":..},
+  "waypoints":[{"name":"","latitude":..,"longitude":..}, ...]}
+```
+`coordinateType=1` (no-transform) — в России GCJ02≡WGS84 (out-of-China guard, offset=0), риска нет.
+
+**ВКЛ по умолчанию** (запрос оператора, тест на закрытой дороге). Геометрия — Amap'овская (снап via
+к HD-дорогам). NOA сам ведёт по камере/радару. **Закрытая/пустая дорога, руки на руле.**
+
+---
+
+## 🛑 Kill-switch / внешнее управление флагами — `HudFlagReceiver`
+
+Внешний стоп ADAS/любого флага с телефона/ноута, БЕЗ голоса, мгновенно (exported BroadcastReceiver,
+регистрируется в poll-цикле). Критично для дорожного теста NOA.
+```bash
+# стоп только NOA
+adb shell am broadcast -a com.zbyd.hud.FLAG --es key adas_noa    --ez val false
+# стоп ВСЕЙ автоматики (master-гейт, гасит и NOA)
+adb shell am broadcast -a com.zbyd.hud.FLAG --es key auto_master --ez val false
+# re-arm NOA
+adb shell am broadcast -a com.zbyd.hud.FLAG --es key adas_noa    --ez val true
+```
+Голосом то же: «выключи ноа» / «выключи автопилот» / «выключи автоматику».
+Проверь ДО движения: лог `FLAG via broadcast adas_noa=false` в `files/zbyd.log`.
+
+---
+
 ## ⚙️ Не-root запись в железо (N9, валидировано)
 
 N9 не рутован, Яндекс пересобран. Запись в авто-железо обходит signature-стену так:
@@ -199,6 +238,7 @@ adb shell "$RUNAS 'cp -f /data/local/tmp/AutoHelper.dex a.dex; \
 | «включи/выключи подогрев руля на старте» | флаг WHEEL_HEAT |
 | «включи/выключи подогрев сидений на старте» | флаг SEAT_HEAT |
 | «включи/выключи открытие панорамы на старте» | флаг PANORAMA |
+| «включи/выключи ноа / автопилот / веди по маршруту» | флаг ADAS_NOA (NOA arm/abort) |
 
 ---
 
@@ -218,6 +258,8 @@ SharedPreferences `zbyd_hud`. Дефолты: safety-positive **on**, intrusive/
 | `auto_wheelheat` | старт маршрута → подогрев руля | **off** |
 | `auto_panorama` | старт маршрута → открыть панораму | **off** |
 | `auto_headlight` | туннель → авто-фары (unvalidated fid) | **off** |
+| `adas_noa` | активный маршрут → NOA по траектории Яндекса (deep-link → Amap HD) | **on** (тест) |
+| `adas_route` | публикация роута в ADAS SOME/IP (L2 эксперимент) | **off** |
 
 Тогл вручную без голоса:
 ```
@@ -272,6 +314,7 @@ adb shell "CLASSPATH=... AutoHelper once W 1001 1125122056 4"   # sunroof STOP (
 ## 📦 Деплой (N9, wifi-adb)
 
 ```bash
+./redeploy_yandex.sh 192.168.1.67:5555   # ПОЛНАЯ пересборка+деплой: decode base.apk -> patch (новый dex) -> deploy_all
 ./deploy_all.sh 192.168.1.67:5555        # apk (chunked) + grant + voice-off + agent + cluster-map
 ./deploy_autohelper.sh                    # shell-uid autoservice helper
 ./deploy_agent.sh                         # JDWP агент (cluster/body/seat) в cameraautostudy
@@ -279,4 +322,6 @@ adb shell "CLASSPATH=... AutoHelper once W 1001 1125122056 4"   # sunroof STOP (
 ./disable_stock_voice.sh                  # выключить штатный ассистент (опц.)
 ```
 
+> **После правки `hudhook_src` → `redeploy_yandex.sh`** (пересоберёт dex-бандл в apk). `deploy_all.sh`
+> ставит уже собранный apk без re-patch. Первый прогон redeploy ~5-8 мин (decode 352M + rebuild + push).
 > Не персистентно после ребута — helper/agent/masquerade перезапускать.
