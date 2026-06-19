@@ -149,6 +149,17 @@ public final class HudEvents {
         return new double[]{ 0, 0 };
     }
 
+    /** Last route geometry point = destination (lat,lon), or null. */
+    private static double[] destLatLon(Object route) {
+        Object pts = call(call(route, "getGeometry"), "getPoints");
+        if (pts instanceof List && !((List<?>) pts).isEmpty()) {
+            Object p = ((List<?>) pts).get(((List<?>) pts).size() - 1);
+            double la = asDbl(call(p, "getLatitude")), lo = asDbl(call(p, "getLongitude"));
+            if (la != 0 || lo != 0) return new double[]{ la, lo };
+        }
+        return null;
+    }
+
     /** True while NaviKit guidance is active (a route is set) — gates the map-capture push. */
     public static boolean guidanceActive() { return sGuidance != null; }
 
@@ -327,6 +338,10 @@ public final class HudEvents {
                               (int) etaOut[0], laneStr, laneCount[0], sSpeedLimit);
             sendClusterNav((int) etaOut[0], remainingMeters(route, curSeg < 0 ? 0 : curSeg));
             try { HudAdasRoute.publishGl(c, gl); } catch (Throwable t) {}   // EXPERIMENTAL, off unless HudFlags.ADAS_ROUTE
+            try {                                                          // EXPERIMENTAL NOA: hand the route's destination to Amap (off unless ADAS_NOA)
+                double[] dest = destLatLon(route);
+                if (dest != null) HudNoa.navigateTo(c, dest[0], dest[1], road);
+            } catch (Throwable t) {}
             try { HudAutomation.onManeuver(icon, dist); HudAutomation.onRouteProgress(remainingMeters(route, curSeg < 0 ? 0 : curSeg)); } catch (Throwable t) {}
             // TIER-1: also feed the CLUSTER via the instrument HAL (bypasses launchermap owner-gate)
             try { HudInstrumentHal.pushManeuver(icon, road, dist); } catch (Throwable t) {}

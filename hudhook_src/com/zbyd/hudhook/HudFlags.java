@@ -21,6 +21,7 @@ public final class HudFlags {
     public static final String WHEEL_HEAT = "auto_wheelheat";  // steering-wheel heating at route start
     public static final String PANORAMA   = "auto_panorama";   // open panoramic roof at route start
     public static final String ADAS_ROUTE = "adas_route";      // EXPERIMENTAL: publish Yandex route to ADAS SOME/IP (L2 nav-assist)
+    public static final String ADAS_NOA   = "adas_noa";        // EXPERIMENTAL: hand Yandex destination to Amap -> native NOA (legit HD)
 
     private static SharedPreferences p(Context c) {
         return c.getApplicationContext().getSharedPreferences("zbyd_hud", Context.MODE_PRIVATE);
@@ -29,7 +30,7 @@ public final class HudFlags {
     public static boolean def(String key) {
         // intrusive/comfort features off by default; safety-positive on
         return !(AUTOSTART.equals(key) || HEADLIGHT.equals(key) || SEAT_HEAT.equals(key)
-                || WHEEL_HEAT.equals(key) || PANORAMA.equals(key) || ADAS_ROUTE.equals(key));
+                || WHEEL_HEAT.equals(key) || PANORAMA.equals(key) || ADAS_ROUTE.equals(key) || ADAS_NOA.equals(key));
     }
 
     public static boolean on(Context c, String key) {
