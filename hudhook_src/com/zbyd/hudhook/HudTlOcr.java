@@ -43,6 +43,7 @@ public final class HudTlOcr {
         try { HudLocation.install(); } catch (Throwable t) {}   // swap location source early (before subs)
         try { HudMapCapture.start(a); } catch (Throwable t) {}  // live Yandex map -> HUD map panel (0x8003)
         try { HudVoice.attach(a); } catch (Throwable t) {}      // Alice voice -> car control (context for TTS confirm)
+        try { HudFlagReceiver.register(a); } catch (Throwable t) {}  // arm kill-switch at app start (not just during nav)
     }
 
     private static void start() {
