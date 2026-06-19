@@ -8,9 +8,18 @@ set -u
 SERIAL="${1:-192.168.1.67:5555}"
 adb connect "$SERIAL" >/dev/null 2>&1
 
-echo "[*] setprop persist.debug.cluster.projection 1 (non-root test)"
+# Two props are needed on a non-Huawei DiLink/IVI cluster (verified in AmapServiceApplication.onCreate):
+#   persist.debug.cluster.projection       = 1  -> selects DEBUG packages (whitelists our mapdemo)
+#   persist.debug.cluster.projection.start = 1  -> sets BydProjectionService.mAllowStart + starts it
+# Gate also requires: ro.product.name in {DiLink5.0,IVI,DiLink6.0,Di100VCP_IVI}, ro.build.system.fission_single_os != 1.
+echo "[*] device gate readouts:"
+for p in ro.product.name ro.build.system.fission_single_os; do
+  echo "    $p = '$(adb -s "$SERIAL" shell getprop $p 2>/dev/null)'"
+done
+echo "[*] setprop persist.debug.cluster.projection 1 + .start 1 (non-root test)"
 adb -s "$SERIAL" shell setprop persist.debug.cluster.projection 1 2>&1
-echo "    readback = '$(adb -s "$SERIAL" shell getprop persist.debug.cluster.projection 2>/dev/null)'  (expect 1)"
+adb -s "$SERIAL" shell setprop persist.debug.cluster.projection.start 1 2>&1
+echo "    readback = '$(adb -s "$SERIAL" shell getprop persist.debug.cluster.projection 2>/dev/null)' / '$(adb -s "$SERIAL" shell getprop persist.debug.cluster.projection.start 2>/dev/null)'  (expect 1 / 1)"
 
 echo "[*] install masquerade app"
 adb -s "$SERIAL" install -r -t "$(dirname "$0")/clustermap.apk" 2>&1 | tail -1
