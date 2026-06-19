@@ -83,6 +83,12 @@ public final class HudPrivClient {
     public static void massageLevel(int seat, int level) { setting("setMassageLevel", seat, level); }
     public static void massageMode(int seat, int mode)   { setting("setMassageMode", seat, mode); }
 
+    // Fridge (the icebox app actuates these directly; bodywork = work-state/door, setting = temp/type).
+    public static final int FRIDGE_WORK = 1276182546, REAR_FRIDGE_WORK = 850550800, REAR_FRIDGE_DOOR = 850550824;
+    public static void fridge(boolean on)        { bodyFid(FRIDGE_WORK, on ? 1 : 0); }        // front fridge on/off
+    public static void rearFridge(boolean on)    { bodyFid(REAR_FRIDGE_WORK, on ? 1 : 0); }
+    public static void rearFridgeDoor(int op)    { bodyFid(REAR_FRIDGE_DOOR, op); }            // door open/close (tune live)
+
     // NOTE: rear overhead screen (OHS) = MOTOR domain (MOTOR_OVERHEAD_SCREEN_* / MOTOR_IVI_TO_REAR_LARGE_SCREEN
     // = 1285554288). cameraautostudy lacks MOTOR_SET -> NOT drivable by this agent. Use com.byd.scenemodes (MOTOR_SET).
 }
