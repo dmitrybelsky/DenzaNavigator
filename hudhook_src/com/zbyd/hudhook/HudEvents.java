@@ -136,6 +136,23 @@ public final class HudEvents {
         return b.append("]").toString();
     }
 
+    /** Whole remaining route geometry curSeg..end (NO 20-pt cap) — for NOA: dest=last pt, via=sampled. */
+    private static String fullGuideLine(Object route, int curSeg) {
+        Object pts = call(call(route, "getGeometry"), "getPoints");
+        if (!(pts instanceof List)) return null;
+        List<?> g = (List<?>) pts; int n = g.size();
+        if (curSeg < 0) curSeg = 0;
+        if (n - curSeg < 2) return null;
+        StringBuilder b = new StringBuilder("[");
+        for (int i = curSeg; i < n; i++) {
+            Object p = g.get(i);
+            double lat = asDbl(call(p, "getLatitude")), lon = asDbl(call(p, "getLongitude"));
+            b.append("[").append(lon).append(",").append(lat).append(",0]");
+            if (i < n - 1) b.append(",");
+        }
+        return b.append("]").toString();
+    }
+
     /** lat/lon of route geometry point at segment index. */
     private static double[] segLatLon(Object route, int seg) {
         Object pts = call(call(route, "getGeometry"), "getPoints");
@@ -338,7 +355,9 @@ public final class HudEvents {
                               (int) etaOut[0], laneStr, laneCount[0], sSpeedLimit);
             sendClusterNav((int) etaOut[0], remainingMeters(route, curSeg < 0 ? 0 : curSeg));
             try { HudAdasRoute.publishGl(c, gl); } catch (Throwable t) {}   // EXPERIMENTAL, off unless HudFlags.ADAS_ROUTE
-            try { HudNoa.followRoute(c, gl, road); } catch (Throwable t) {}  // EXPERIMENTAL NOA: route Amap dest+via -> native NOA (off unless ADAS_NOA)
+            // EXPERIMENTAL NOA: route Amap to the FINAL destination + via-points sampled across the WHOLE
+            // remaining route (full geometry, not the 20-pt AR window) so Amap's HD route hugs the Yandex path.
+            try { HudNoa.followRoute(c, fullGuideLine(route, curSeg < 0 ? 0 : curSeg), road); } catch (Throwable t) {}
             try { HudAutomation.onManeuver(icon, dist); HudAutomation.onRouteProgress(remainingMeters(route, curSeg < 0 ? 0 : curSeg)); } catch (Throwable t) {}
             // TIER-1: also feed the CLUSTER via the instrument HAL (bypasses launchermap owner-gate)
             try { HudInstrumentHal.pushManeuver(icon, road, dist); } catch (Throwable t) {}
