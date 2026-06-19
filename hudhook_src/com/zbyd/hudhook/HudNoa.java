@@ -38,13 +38,20 @@ public final class HudNoa {
     private static final String SRC_APP = "com.yandex.zbyd";  // sourceApplication attribution (producer sets caller pkg)
     private static final int COORD_NATIVE = 1;          // coordinateType: !=2,!=3 -> no transform (Russia: GCJ02==WGS84)
     private static final int MAX_WAYPOINTS = 16;        // cap so the URI stays sane + Amap accepts it
+    private static final long MIN_INTERVAL_MS = 1000;   // floor between sends (matches the 1s poll); change-gated below
     private static long sLast;
+    private static String sSig;                          // last sent route signature — skip identical re-sends
 
-    /** Parse the AR guideLine "[[lon,lat,0],...]", sample dense waypoints, and route Amap dest+waypoints. */
+    /**
+     * Parse the AR guideLine "[[lon,lat,0],...]", sample dense waypoints, route Amap dest+waypoints.
+     * Polled every ~1s. Each send makes Amap RE-PLAN, so we re-send only when the route actually changed
+     * (deviation / Yandex reroute / passing a via) — detected by a coord-quantized signature. A stable route
+     * fires once; a real change reaches Amap within ~1s. Avoids re-plan storms that would reset active NOA.
+     */
     public static void followRoute(Context ctx, String gl, String dest) {
         if (ctx == null || gl == null || gl.length() < 8 || !HudFlags.on(ctx, HudFlags.ADAS_NOA)) return;
         long now = System.currentTimeMillis();
-        if (now - sLast < 15000) return; sLast = now;            // re-route only occasionally (Amap re-plans)
+        if (now - sLast < MIN_INTERVAL_MS) return;               // rate floor (burst guard)
         try {
             java.util.ArrayList<double[]> pts = parse(gl);
             int n = pts.size(); if (n < 2) return;
@@ -53,21 +60,29 @@ public final class HudNoa {
             double[] end = pts.get(n - 1);
             data.put("destination", poi(dest == null ? "Destination" : dest, end[0], end[1]));
             JSONArray wp = new JSONArray();
+            StringBuilder sig = new StringBuilder().append(q(end[0])).append(',').append(q(end[1]));
             int step = Math.max(1, (n - 1) / (MAX_WAYPOINTS + 1));   // evenly sample interior points
             for (int i = step; i < n - 1; i += step) {
                 double[] p = pts.get(i);
-                wp.put(poi("wp" + i, p[0], p[1]));
+                wp.put(poi("", p[0], p[1]));                          // empty via name -> stable signature
+                sig.append(';').append(q(p[0])).append(',').append(q(p[1]));
                 if (wp.length() >= MAX_WAYPOINTS) break;
             }
             data.put("waypoints", wp);
+            String s = sig.toString();
+            if (s.equals(sSig)) return;                          // route unchanged (within ~11m) -> don't re-plan
             String uri = "bydautomap://route?sourceApplication=" + Uri.encode(SRC_APP)
                        + "&data=" + Uri.encode(data.toString());
             Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(PKG)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(it);
+            sLast = now; sSig = s;
             HudLog.f("NOA route dest=" + end[0] + "," + end[1] + " wp=" + wp.length());
         } catch (Throwable t) { HudLog.f("NOA followRoute: " + t); }
     }
+
+    /** Quantize a coord to ~4 decimals (~11m) so signature is stable while the car stays in one bucket. */
+    private static long q(double v) { return Math.round(v * 1e4); }
 
     private static JSONObject poi(String name, double lat, double lon) throws Exception {
         JSONObject o = new JSONObject();
