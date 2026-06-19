@@ -74,6 +74,10 @@ public final class HudPrivClient {
     public static void settingFid(int fid, int val) { send("DSET " + CLS_SETTING + " " + fid + " " + val); }
     public static final int REQ_AC = 850436149, REQ_INTERIOR_LIGHT = 850436128, REQ_ATMOSPHERE = 850436131,
                             REQ_DOORLOCK = 850436141, REQ_WINDOW = 850436120, REQ_SEAT = 850436144;
+    public static final int REQ_REAR_PANEL = 850436156;   // SETTING_REAR_PANEL_STATUS_REQUEST_COMMAND_SET (0x32B0A03C)
+    // OHS / rear overhead-screen panel via the SETTING request-command channel (agent SETTING_SET) — bypasses
+    // the MOTOR_SET wall. A "leave car" scene sets this=1 (retract). Find the deploy/open value live.
+    public static void rearPanel(int v)        { settingFid(REQ_REAR_PANEL, v); }
     public static void acReq(int v)            { settingFid(REQ_AC, v); }            // climate scene-request
     public static void interiorLightReq(int v) { settingFid(REQ_INTERIOR_LIGHT, v); }// cabin light (2=on per NAP)
     public static void ambientReq(int v)       { settingFid(REQ_ATMOSPHERE, v); }    // ambient (2=on per NAP)
