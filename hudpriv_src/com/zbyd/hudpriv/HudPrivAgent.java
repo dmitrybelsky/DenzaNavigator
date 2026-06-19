@@ -46,13 +46,13 @@ public final class HudPrivAgent {
     }
 
     // BYD HUD instrument FIDs (com.byd.feature.instrument.Instrument)
-    private static final int FID_HUD_NAVIGATION_MAP_SET = 0x32B1102E;   // 1 = enable windshield map panel
+    private static final int FID_HUD_NAVIGATION_MAP_SET = 0x32B1102E;   // NavigationMapSwitchProperty: TRUE=2 enable / FALSE=1 disable
 
     private static void serve() throws Exception {
         ctx = (Context) Class.forName("android.app.ActivityThread")
                 .getMethod("currentApplication").invoke(null);
         resolveInstr();
-        boolean mapOn = writeFidOn(instr, FID_HUD_NAVIGATION_MAP_SET, 1);  // enable HUD nav-map panel on startup
+        boolean mapOn = writeFidOn(instr, FID_HUD_NAVIGATION_MAP_SET, 2);  // 2=TRUE -> enable HUD nav-map panel on startup
         Thread fb = new Thread(new Runnable() { @Override public void run() { fileBridge(); } }, "zbyd-filebridge");
         fb.setDaemon(true); fb.start();                                    // /sdcard channel for untrusted_app (Yandex)
         LocalServerSocket srv = new LocalServerSocket(SOCK);
