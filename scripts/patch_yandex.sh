@@ -310,6 +310,35 @@ for sm in (glob.glob(os.path.join(dec,'smali_classes*','com','yandex','alice','*
 if vh == 0: print("[=] voice hook: RecognizerListener.onPartialResults not found -- skip")
 PY
 
+# 9. DUMMY-LOCATION source patch (EXPERIMENTAL, AR-HUD-map separation). MapsLocationManagerImpl.p()
+#    returns the active source wrapper (...mapkit/location/f). We make it return OUR fed DummyLocationManager
+#    holder when HudDummyLocation.holder()!=null (enabled by the mock_china toggle), so Yandex reads the real
+#    car position we feed while the Android system mock (China) only steers launchermap. Fails closed.
+python3 - "$DEC" <<'PY'
+import sys, os, re, glob
+dec = sys.argv[1]; done = 0
+RET = 'Lru/yandex/yandexmaps/multiplatform/mapkit/location/f;'
+for sm in glob.glob(os.path.join(dec,'smali_classes*','ru','yandex','yandexmaps','multiplatform','location','internal','*.smali')):
+    try: t = open(sm, encoding='utf-8', errors='surrogateescape').read()
+    except Exception: continue
+    if 'HudDummyLocation' in t: continue
+    # the active-source getter: public final p()L..mapkit/location/f;  -> returns e.getValue()
+    m = re.search(r'(\.method public final p\(\)' + re.escape(RET) + r'\n)([ \t]*\.locals (\d+)\n)', t)
+    if not m: continue
+    locals_n = max(1, int(m.group(3)))
+    head = m.group(1) + '    .locals %d\n' % locals_n
+    inj = ('    invoke-static {}, Lcom/zbyd/hudhook/HudDummyLocation;->holder()Ljava/lang/Object;\n'
+           '    move-result-object v0\n'
+           '    if-eqz v0, :zbyd_real_src\n'
+           '    check-cast v0, ' + RET + '\n'
+           '    return-object v0\n'
+           '    :zbyd_real_src\n')
+    open(sm,'w',encoding='utf-8',errors='surrogateescape').write(t[:m.start()] + head + inj + t[m.end():])
+    done += 1
+    print(f"[+] dummy-location: MapsLocationManagerImpl.p() -> HudDummyLocation.holder() ({os.path.relpath(sm, dec)})")
+if done == 0: print("[=] dummy-location: p()->f source getter not found (version diff?) -- skip (separation degrades to spoof-detect)")
+PY
+
 if [ "$NO_BUILD" = "1" ]; then echo "[*] --no-build: patches applied, skipping rebuild"; exit 0; fi
 
 echo "[*] apktool b"; apktool b "$DEC" -o /tmp/yandexnavi-final.apk >/dev/null

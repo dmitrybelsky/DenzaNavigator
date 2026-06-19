@@ -39,7 +39,11 @@ public final class HudLocation {
     // mock and stays on the real raw-GNSS position. Net: launchermap=China, Yandex=real -> separation.
     private static volatile boolean sMockChina;
     private static final double BEIJING_LAT = 39.90840, BEIJING_LON = 116.40739;  // Tiananmen (AMap-covered)
-    public static void setMockChina(boolean v) { sMockChina = v; HudLog.f("HudLocation mockChina=" + v); }
+    public static void setMockChina(boolean v) {
+        sMockChina = v;
+        try { HudDummyLocation.setEnabled(v); } catch (Throwable t) {}   // route Yandex to the dummy (real); system mock = China for launchermap
+        HudLog.f("HudLocation mockChina=" + v);
+    }
 
     private static Context ctx() {
         try { return (Context) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null); }
@@ -102,7 +106,10 @@ public final class HudLocation {
         if (sLm == null) return;
         boolean china = sMockChina;
         if (!sHave && !china) return;
-        double lat = china ? BEIJING_LAT : sLat, lon = china ? BEIJING_LON : sLon;   // China override wins over the car feed
+        // China mode: system mock -> Beijing (ONLY launchermap follows); the REAL car position (sLat/sLon,
+        // fed by HudLocationCar) goes to Yandex via the MapKit DummyLocationManager -> deterministic separation.
+        if (china && sHave) HudDummyLocation.feed(sLat, sLon, sAlt, sAcc, sBearing, sSpeed);
+        double lat = china ? BEIJING_LAT : sLat, lon = china ? BEIJING_LON : sLon;   // system-mock override (launchermap)
         for (String p : PROVIDERS) {
             try {
                 Location l = new Location(p);
@@ -125,9 +132,7 @@ public final class HudLocation {
     }
     private static final Runnable FEED = new Runnable() {
         @Override public void run() {
-            if (sMockChina) { sLat = BEIJING_LAT; sLon = BEIJING_LON; sAlt = 50.0; sAcc = 4f; sBearing = 0f; sSpeed = 0f; sHave = true;
-                              if (sTick++ % 25 == 0) HudLog.f("mockChina feed -> Beijing (launchermap follows; Yandex should reject as spoof)"); }
-            else if (sSelfTest) { sLat = sTestLat + (sTick++ * 0.00001); sLon = sTestLon; sBearing = 0f; sSpeed = 8f; sHave = true;
+            if (sSelfTest && !sMockChina) { sLat = sTestLat + (sTick++ * 0.00001); sLon = sTestLon; sBearing = 0f; sSpeed = 8f; sHave = true;
                              if (sTick % 25 == 0) HudLog.f("selfTest tick=" + sTick + " feed lat=" + sLat); }
             pushNow();
             if (sBg != null) sBg.postDelayed(this, 200L);
