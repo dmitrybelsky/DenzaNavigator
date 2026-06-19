@@ -338,10 +338,7 @@ public final class HudEvents {
                               (int) etaOut[0], laneStr, laneCount[0], sSpeedLimit);
             sendClusterNav((int) etaOut[0], remainingMeters(route, curSeg < 0 ? 0 : curSeg));
             try { HudAdasRoute.publishGl(c, gl); } catch (Throwable t) {}   // EXPERIMENTAL, off unless HudFlags.ADAS_ROUTE
-            try {                                                          // EXPERIMENTAL NOA: hand the route's destination to Amap (off unless ADAS_NOA)
-                double[] dest = destLatLon(route);
-                if (dest != null) HudNoa.navigateTo(c, dest[0], dest[1], road);
-            } catch (Throwable t) {}
+            try { HudNoa.followRoute(c, gl, road); } catch (Throwable t) {}  // EXPERIMENTAL NOA: route Amap dest+via -> native NOA (off unless ADAS_NOA)
             try { HudAutomation.onManeuver(icon, dist); HudAutomation.onRouteProgress(remainingMeters(route, curSeg < 0 ? 0 : curSeg)); } catch (Throwable t) {}
             // TIER-1: also feed the CLUSTER via the instrument HAL (bypasses launchermap owner-gate)
             try { HudInstrumentHal.pushManeuver(icon, road, dist); } catch (Throwable t) {}

@@ -50,10 +50,28 @@ public final class HudNoa {
         HudLog.f("NOA navigateTo: no launchermap nav URI accepted");
     }
 
-    /** Route-following stub: feed the destination now (last polyline point). Dense via-points await a
-     *  confirmed deep-link/ProtocolService format — Amap's NaviController.addWayPoint is internal. */
-    public static void followRoute(Context ctx, double[] lat, double[] lon, String dest) {
-        if (lat == null || lon == null || lat.length == 0) return;
-        navigateTo(ctx, lat[lat.length - 1], lon[lon.length - 1], dest);   // destination only for now
+    /** Parse the AR guideLine "[[lon,lat,0],...]" and route Amap to its end THROUGH its midpoint (one via),
+     *  so Amap's HD route bends toward the Yandex path -> native NOA hugs it. Off unless HudFlags.ADAS_NOA. */
+    public static void followRoute(Context ctx, String gl, String dest) {
+        if (ctx == null || gl == null || gl.length() < 8 || !HudFlags.on(ctx, HudFlags.ADAS_NOA)) return;
+        long now = System.currentTimeMillis();
+        if (now - sLast < 10000) return; sLast = now;
+        try {
+            String s = gl.trim();
+            if (s.startsWith("[")) s = s.substring(1);
+            if (s.endsWith("]")) s = s.substring(0, s.length() - 1);
+            String[] tk = s.split("\\],\\[");
+            int n = tk.length; if (n < 2) return;
+            double[] mid = ll(tk[n / 2]), end = ll(tk[n - 1]);
+            if (end == null) return;
+            HudProtocolNav.navigate(ctx, end[0], end[1], dest,
+                    mid == null ? 0 : mid[0], mid == null ? 0 : mid[1], "");   // dest + one via (route midpoint)
+        } catch (Throwable t) { HudLog.f("NOA followRoute: " + t); }
+    }
+
+    private static double[] ll(String t) {
+        try { String[] xy = t.replace("[", "").replace("]", "").split(",");
+              return new double[]{ Double.parseDouble(xy[1].trim()), Double.parseDouble(xy[0].trim()) }; }  // [lat,lon] from lon,lat,0
+        catch (Throwable e) { return null; }
     }
 }
