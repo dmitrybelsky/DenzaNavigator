@@ -102,8 +102,10 @@ public final class HudSomeIp {
     }
 
     /** Publish the live Yandex map raster to the HUD map panel (event 0x8003 HudNavigationmap{f1=Base64 PNG}). */
-    private static int sMapLog;
+    private static int sMapLog, sMapNoSub;
+    private static volatile boolean sMapDead;
     public static void pushMap(Context c, byte[] pngBytes) {
+        if (sMapDead) return;                                // HUD has no map-raster consumer (5.1 Denza/Leo7) — gave up
         ensure(c); start();
         if (sBinder == null || pngBytes == null || pngBytes.length == 0) return;
         String b64 = android.util.Base64.encodeToString(pngBytes, android.util.Base64.NO_WRAP);
@@ -111,6 +113,10 @@ public final class HudSomeIp {
         sfield(s, 1, b64);                                   // HudNavigationmap.navigationMap_ = f1
         int r = fire(TOPIC_HUD_MAP, embed(1, s.toByteArray()));
         if (sMapLog++ < 6) HudLog.f("pushMap fire ret=" + r + " png=" + pngBytes.length + " b64=" + b64.length());
+        // The map raster is a 6.0-Yangwang HUD feature; 5.1 Denza/Leo7 has no 0x8003 consumer -> ret!=0 forever.
+        // Auto-disable after a run of no-subscriber replies so we don't waste a PNG encode + SOME/IP call each tick.
+        if (r == 0) sMapNoSub = 0;
+        else if (++sMapNoSub >= 20) { sMapDead = true; HudLog.f("pushMap: no HUD map consumer after 20 tries (5.1 path) -> disabled"); }
     }
 
     private static void startSd() {

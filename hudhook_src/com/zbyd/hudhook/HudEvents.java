@@ -362,6 +362,7 @@ public final class HudEvents {
             try { HudAutomation.onManeuver(icon, dist); HudAutomation.onRouteProgress(remainingMeters(route, curSeg < 0 ? 0 : curSeg)); } catch (Throwable t) {}
             // TIER-1: also feed the CLUSTER via the instrument HAL (bypasses launchermap owner-gate)
             try { HudInstrumentHal.pushManeuver(icon, road, dist); } catch (Throwable t) {}
+            try { HudInstrumentHal.pushLanes(laneStr, laneCount[0], dist); } catch (Throwable t) {}  // 5.1 framework-FID lanes
             try { HudTts.maneuver(c, icon, dist, road); } catch (Throwable t) {}   // native-voice prompt (opt-in)
             // lane confirmation: driver's turn-signal vs the upcoming maneuver direction
             if (sCarBlinker == 1 || sCarBlinker == 2) {

@@ -25,6 +25,17 @@ public final class HudInstrumentHal {
     private static final int HUD_SCREEN_NAV_LAYOUT = 1276174357;   // SettingDevice; =3 selects nav layout (map area)
     private static final int SCREEN_LAYOUT_NAV     = 3;
     private static final String NAVI_STATUS_FID    = "0x43E0003A"; // instrument 1138753594; =2 navi-on
+
+    // Framework-FID TBT (5.1 Denza/Leo7 path, from HudInstrumentController ref). instrument device.
+    private static final int GUIDE_ICON_SIMPLE  = 1139806224;      // maneuver icon (BYD/AMap turn-id = our bydIcon)
+    private static final int GUIDE_ICON_DUAL    = 1139806256;
+    private static final int FRONT_CROSSING_DIST = 1139806232;     // distance to maneuver, m
+    // Lane guidance — SettingDevice FIDs (CANFD/Leo7 range). 12 lane slots; LANE_EMPTY=255 clears a slot.
+    private static final int LANE_NUMBER = 1285554200, LANE_DIST = 1285554184, LANE_EMPTY = 255;
+    private static final int[] LANE_STATES = {
+        1285554208, 1285554212, 1285554216, 1285554220, 1285554224, 1285554228,
+        1285554232, 1285554236, 1285554260, 1285554264, 1285554268, 1285554272,
+    };
     private static volatile Object sDev;
     private static volatile boolean sTried, sNaviSet, sHudLayoutSet;
     private static Method mSimple, mNext, mStatus, mCamera, mDest;
@@ -63,8 +74,15 @@ public final class HudInstrumentHal {
      *  write it directly — route through the privileged agent (HudPrivClient -> HudPrivAgent injected
      *  via JDWP into a perm-holding debuggable BYD app). A direct attempt stays as a phone fallback. */
     public static void pushManeuver(int turnType, String road, int distM) {
-        activateHudLayout();                                    // ensure HUD is in nav layout -> map raster (0x8003) gets a subscriber
+        activateHudLayout();                                    // ensure HUD is in nav layout
         HudPrivClient.cluster(turnType, distM, road);           // privileged channel (primary)
+        // Framework-FID TBT via the agent (5.1 path): maneuver icon (simple+dual) + distance. Raw instrument
+        // FIDs, written by the perm-holding agent (re-signed Yandex can't write instrument directly).
+        try {
+            instrFid(GUIDE_ICON_SIMPLE, turnType);
+            instrFid(GUIDE_ICON_DUAL, turnType);
+            instrFid(FRONT_CROSSING_DIST, distM);
+        } catch (Throwable t) {}
         if (sDirectDead) return;
         if (!resolve()) { sDirectDead = true; return; }
         try {
@@ -79,4 +97,30 @@ public final class HudInstrumentHal {
     public static void pushCamera(int camType, int distM, int roadClass) {
         HudPrivClient.camera(camType, distM, roadClass);
     }
+
+    /**
+     * Lane guidance to the cluster (5.1 framework-FID path). laneStr is HudEvents' "code,active|..." (per lane:
+     * direction-code 0/1/3, active-flag). We write the base per-slot direction code (highlight isn't carried by
+     * this path — see HudInstrumentController ref). count = lane count, distM = distance to the lane split.
+     */
+    public static void pushLanes(String laneStr, int count, int distM) {
+        if (laneStr == null || laneStr.isEmpty() || count <= 0) return;
+        try {
+            String[] lanes = laneStr.split("\\|");
+            settingFidQ(LANE_NUMBER, count);
+            for (int i = 0; i < LANE_STATES.length; i++) {
+                int code = LANE_EMPTY;
+                if (i < lanes.length && lanes[i].length() > 0) {
+                    String[] ca = lanes[i].split(",");
+                    try { code = Integer.parseInt(ca[0].trim()); } catch (Throwable t) { code = LANE_EMPTY; }
+                }
+                settingFidQ(LANE_STATES[i], code);
+            }
+            settingFidQ(LANE_DIST, distM);
+        } catch (Throwable t) {}
+    }
+
+    // --- raw FID helpers via the privileged agent ---
+    private static void instrFid(int fid, int val)   { HudPrivClient.fidSet("0x" + Integer.toHexString(fid), val); }  // instrument device
+    private static void settingFidQ(int fid, int val){ HudPrivClient.settingFid(fid, val); }                          // BYDAutoSettingDevice
 }
