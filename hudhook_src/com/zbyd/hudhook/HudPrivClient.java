@@ -79,6 +79,10 @@ public final class HudPrivClient {
     public static void ambientReq(int v)       { settingFid(REQ_ATMOSPHERE, v); }    // ambient (2=on per NAP)
     public static void doorLockReq(int v)      { settingFid(REQ_DOORLOCK, v); }      // 1=lock per NAP
 
+    // Seat massage (BYDAutoSettingDevice high-level; SETTING_SET). seat index 1..n, level/mode 0=off.
+    public static void massageLevel(int seat, int level) { setting("setMassageLevel", seat, level); }
+    public static void massageMode(int seat, int mode)   { setting("setMassageMode", seat, mode); }
+
     // NOTE: rear overhead screen (OHS) = MOTOR domain (MOTOR_OVERHEAD_SCREEN_* / MOTOR_IVI_TO_REAR_LARGE_SCREEN
     // = 1285554288). cameraautostudy lacks MOTOR_SET -> NOT drivable by this agent. Use com.byd.scenemodes (MOTOR_SET).
 }

@@ -310,7 +310,7 @@ public final class HudEvents {
             String name = action instanceof Enum ? ((Enum<?>) action).name()
                                                  : String.valueOf(action);
             int icon = bydIcon(name);
-            String road = str(call(ann, "getToponym"));
+            String road = roadName(ann);   // mapkit Annotation has NO getToponym(); use getDescriptionText/phrase
             int dist = distMeters(route, curSeg, secSeg < 0 ? curSeg : secSeg);
             if (sPollLog <= 3) HudLog.f("MANEUVER action=" + name + " icon=" + icon + " road=" + road + " dist=" + dist);
             // hudbench-in-yandex: publish the windshield HUD frame (665) directly via SOME/IP —
@@ -461,4 +461,21 @@ public final class HudEvents {
     private static int asInt(Object o) { return o instanceof Number ? ((Number) o).intValue() : -1; }
     private static double asDbl(Object o) { return o instanceof Number ? ((Number) o).doubleValue() : 0.0; }
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }
+
+    /** Road/maneuver name from a mapkit driving Annotation. The public API has NO getToponym() — it exposes
+     *  getDescriptionText():String (human-readable, includes the road) and getToponymPhrase():List (tokens).
+     *  Try the clean phrase first, fall back to the description text. */
+    private static String roadName(Object ann) {
+        String d = str(call(ann, "getDescriptionText"));    // reliable String: road/maneuver text
+        if (d != null && d.length() > 0) return d;
+        try {                                                // fallback: join phrase tokens that are Strings
+            Object ph = call(ann, "getToponymPhrase");
+            if (ph instanceof List) {
+                StringBuilder b = new StringBuilder();
+                for (Object p : (List<?>) ph) if (p instanceof String) { if (b.length() > 0) b.append(' '); b.append((String) p); }
+                if (b.length() > 0) return b.toString();
+            }
+        } catch (Throwable t) {}
+        return d;
+    }
 }
