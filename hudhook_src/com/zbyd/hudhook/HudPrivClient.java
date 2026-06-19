@@ -51,4 +51,34 @@ public final class HudPrivClient {
     private static final int REAR_SUNSHADE_PERCENT_FID = 1276178472;   // BODYWORK_REAR_SUNSHADE_PANEL_PERCENT_SET (CanFD)
     public static void sunshade(int pct)     { body("setSunshadeState", pct); }
     public static void rearSunshade(int pct) { bodyFid(REAR_SUNSHADE_PERCENT_FID, pct); }
+
+    // --- Side electric doors (N9 auto doors). Bodywork CTRL fids (agent holds BODYWORK_SET). ---
+    // op = CarElectricDoorOperate (verify live: likely 1=open / 2=close / 3=stop). Position via *_OPEN_ANGLE_SET.
+    public static final int DOOR_LF = 1276178480, DOOR_LR = 1276178488, DOOR_RF = 1276178483, DOOR_RR = 1276178491;
+    public static final int DOOR_LF_ANGLE = 0x4C117010, DOOR_LR_ANGLE = 0x4C117020,
+                            DOOR_RF_ANGLE = 0x4C117018, DOOR_RR_ANGLE = 0x4C117028;
+    public static void door(int doorFid, int op)        { bodyFid(doorFid, op); }      // open/close one side door
+    public static void doorAngle(int angleFid, int pct) { bodyFid(angleFid, pct); }    // open-angle 0..100
+
+    // --- Rear-window sunshade (rear windshield / RSE shade). Bodywork fids (BODYWORK_SET). ---
+    public static final int REAR_WINDOW_SHADE_CTRL = 1276207170;       // BODYWORK_REAR_SUNSHADE_CONTROL_SET
+    public static final int RSE_REAR_SHADE_PCT     = 412151840;        // BODYWORK_RSE_REAR_SUNSHADE_PANEL_PERCENT_SET
+    public static void rearWindowShade(int v)  { bodyFid(REAR_WINDOW_SHADE_CTRL, v); } // open/close (tune value live)
+    public static void rseRearShade(int pct)   { bodyFid(RSE_REAR_SHADE_PCT, pct); }   // percent 0..100
+
+    // --- SETTING "scene request command" channel (0x32B0A0xx, SETTING domain). The agent holds SETTING_SET,
+    //     so these reach AC/light/lock/window WITHOUT the per-device AC_SET/LIGHT_SET/DOOR_LOCK_SET perms and
+    //     WITHOUT scenemodes. Values are scene-request command codes (from NAP: light=2/lock=1/window=2) —
+    //     verify on/off semantics live. Written via DSET on BYDAutoSettingDevice. ---
+    private static final String CLS_SETTING = "android.hardware.bydauto.setting.BYDAutoSettingDevice";
+    public static void settingFid(int fid, int val) { send("DSET " + CLS_SETTING + " " + fid + " " + val); }
+    public static final int REQ_AC = 850436149, REQ_INTERIOR_LIGHT = 850436128, REQ_ATMOSPHERE = 850436131,
+                            REQ_DOORLOCK = 850436141, REQ_WINDOW = 850436120, REQ_SEAT = 850436144;
+    public static void acReq(int v)            { settingFid(REQ_AC, v); }            // climate scene-request
+    public static void interiorLightReq(int v) { settingFid(REQ_INTERIOR_LIGHT, v); }// cabin light (2=on per NAP)
+    public static void ambientReq(int v)       { settingFid(REQ_ATMOSPHERE, v); }    // ambient (2=on per NAP)
+    public static void doorLockReq(int v)      { settingFid(REQ_DOORLOCK, v); }      // 1=lock per NAP
+
+    // NOTE: rear overhead screen (OHS) = MOTOR domain (MOTOR_OVERHEAD_SCREEN_* / MOTOR_IVI_TO_REAR_LARGE_SCREEN
+    // = 1285554288). cameraautostudy lacks MOTOR_SET -> NOT drivable by this agent. Use com.byd.scenemodes (MOTOR_SET).
 }
