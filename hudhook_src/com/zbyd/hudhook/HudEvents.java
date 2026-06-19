@@ -53,6 +53,7 @@ public final class HudEvents {
     private static void poll() throws Exception {
         Object g = sGuidance;
         Context c = ctx();
+        if (c != null) HudFlagReceiver.register(c);   // external flag/ADAS kill-switch (idempotent)
         if (g == null || c == null) return;
         // DECISIVE injection check: what location is NaviKit actually using? Guidance.getLocation()
         // -> ClassifiedLocation.getLocation() -> Location.getPosition() -> Point lat/lon. If this tracks

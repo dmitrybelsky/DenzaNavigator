@@ -44,6 +44,9 @@ public final class HudVoice {
         if ((tOn || tOff) && has(s, "автоматик")) {
             HudFlags.set(sCtx, HudFlags.MASTER, tOn); ok(tOn ? "Автоматика включена" : "Автоматика выключена"); return true;
         }
+        if ((tOn || tOff) && has(s, "ноа", "автопилот", "веди по маршрут", "следуй за маршрут")) {  // NOA arm/abort
+            HudFlags.set(sCtx, HudFlags.ADAS_NOA, tOn); ok(tOn ? "Ведение по маршруту включено" : "Ведение по маршруту выключено"); return true;
+        }
         if (has(s, "прогрей", "подготовь", "запусти машин", "разогрей")) {  // on-demand preconditioning
             HudCarClient.ac(true); ok("Прогреваю машину"); return true;
         }
