@@ -50,22 +50,21 @@ public final class HudNoa {
         HudLog.f("NOA navigateTo: no launchermap nav URI accepted");
     }
 
-    /** Parse the AR guideLine "[[lon,lat,0],...]" and route Amap to its end THROUGH its midpoint (one via),
-     *  so Amap's HD route bends toward the Yandex path -> native NOA hugs it. Off unless HudFlags.ADAS_NOA. */
+    /** Parse the AR guideLine "[[lon,lat,0],...]" and route Amap to its END (destination) — the native ADAS
+     *  then runs NOA along Amap's HD route to that point. Off unless HudFlags.ADAS_NOA.
+     *  NOTE: exact route-hugging via intermediate waypoints is NOT cleanly reachable — the obvious protocol
+     *  (ProtocolService 30406 NaviOpera) turned out to be navigation *operations* on the active task, not
+     *  navigate-to-coords; and the bydautomap://route deep link's via-param format is obfuscated. So we feed
+     *  only the destination; Amap plans its own HD route to it. */
     public static void followRoute(Context ctx, String gl, String dest) {
         if (ctx == null || gl == null || gl.length() < 8 || !HudFlags.on(ctx, HudFlags.ADAS_NOA)) return;
-        long now = System.currentTimeMillis();
-        if (now - sLast < 10000) return; sLast = now;
         try {
             String s = gl.trim();
             if (s.startsWith("[")) s = s.substring(1);
             if (s.endsWith("]")) s = s.substring(0, s.length() - 1);
             String[] tk = s.split("\\],\\[");
-            int n = tk.length; if (n < 2) return;
-            double[] mid = ll(tk[n / 2]), end = ll(tk[n - 1]);
-            if (end == null) return;
-            HudProtocolNav.navigate(ctx, end[0], end[1], dest,
-                    mid == null ? 0 : mid[0], mid == null ? 0 : mid[1], "");   // dest + one via (route midpoint)
+            double[] end = ll(tk[tk.length - 1]);
+            if (end != null) navigateTo(ctx, end[0], end[1], dest);
         } catch (Throwable t) { HudLog.f("NOA followRoute: " + t); }
     }
 
