@@ -18,10 +18,25 @@ import java.lang.reflect.Method;
 public final class HudInstrumentHal {
 
     private static final int NAVI_OPEN_SET_DEST = 2;
+    // HUD nav-layout activation (Open BYD / HudInstrumentController ref). The HUD SoC subscribes to the
+    // map-raster event 0x8003 (pushMap) ONLY when the HUD screen is in the NAV LAYOUT. Without this the
+    // road/AR event 0x8001 (pushHud) still renders, but pushMap returns 1 (no subscriber) — exactly the
+    // "no map on AR-HUD" symptom. HUD_SCREEN_NAV_LAYOUT is a SettingDevice FID, NAVI_STATUS an instrument FID.
+    private static final int HUD_SCREEN_NAV_LAYOUT = 1276174357;   // SettingDevice; =3 selects nav layout (map area)
+    private static final int SCREEN_LAYOUT_NAV     = 3;
+    private static final String NAVI_STATUS_FID    = "0x43E0003A"; // instrument 1138753594; =2 navi-on
     private static volatile Object sDev;
-    private static volatile boolean sTried, sNaviSet;
+    private static volatile boolean sTried, sNaviSet, sHudLayoutSet;
     private static Method mSimple, mNext, mStatus, mCamera, mDest;
     private static int sLog;
+
+    /** One-time: put the HUD screen into the nav layout so the HUD SoC subscribes to the 0x8003 map raster. */
+    private static void activateHudLayout() {
+        if (sHudLayoutSet) return; sHudLayoutSet = true;
+        try { HudPrivClient.settingFid(HUD_SCREEN_NAV_LAYOUT, SCREEN_LAYOUT_NAV); } catch (Throwable t) {}
+        try { HudPrivClient.fidSet(NAVI_STATUS_FID, 2); } catch (Throwable t) {}
+        HudLog.f("HUD nav-layout activate: HUD_SCREEN_NAV_LAYOUT(1276174357)=3, NAVI_STATUS=2");
+    }
 
     private static synchronized boolean resolve() {
         if (sDev != null) return true;
@@ -48,6 +63,7 @@ public final class HudInstrumentHal {
      *  write it directly — route through the privileged agent (HudPrivClient -> HudPrivAgent injected
      *  via JDWP into a perm-holding debuggable BYD app). A direct attempt stays as a phone fallback. */
     public static void pushManeuver(int turnType, String road, int distM) {
+        activateHudLayout();                                    // ensure HUD is in nav layout -> map raster (0x8003) gets a subscriber
         HudPrivClient.cluster(turnType, distM, road);           // privileged channel (primary)
         if (sDirectDead) return;
         if (!resolve()) { sDirectDead = true; return; }
