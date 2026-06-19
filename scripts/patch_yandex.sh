@@ -11,6 +11,7 @@
 #   3. ad/analytics block -> res/xml/network_security_config.xml + manifest wiring
 #                            (empty trust-anchors => TLS to telemetry hosts fails)
 #   4. care_offer_order.xml -> drop gravity="0x0" (aapt2 build fix)
+#   3e. app label -> "Denza Navigator" (patched build distinguishable from stock in launcher/recents)
 #
 # Usage:
 #   apktool d yandexnavi-<ver>-orig.apk -o /tmp/yandex-decompiled    # one-time decode
@@ -109,6 +110,18 @@ try:
         print(f"[+] remove-ads: stripped MobileAdsInitializeProvider ({len(ads)})")
     else:
         print("[=] remove-ads: ads initializer provider not found")
+    # 3e. RENAME: relabel "Denza Navigator" so the PATCHED build is visually distinct from a stock install
+    #     in the launcher/recents. The launcher-activity label overrides the application label, so rewrite
+    #     BOTH string refs to a literal (locale-independent; no strings.xml churn). Version-robust: if a ref
+    #     name moved, it just warns (non-fatal).
+    NEW_NAME = 'Denza Navigator'
+    relabel = 0
+    for ref in ('@string/app_diff_yandexmaps_app_short_name', '@string/app_diff_app_full_name'):
+        needle = 'android:label="%s"' % ref
+        if needle in man:
+            n = man.count(needle); man = man.replace(needle, 'android:label="%s"' % NEW_NAME); relabel += n
+    print(f"[+] rename: app label -> '{NEW_NAME}' ({relabel} refs)" if relabel
+          else "[=] rename: label refs not found (version diff? check AndroidManifest)")
     open(mf,'w',encoding='utf-8').write(man)
 except Exception as e:
     print(f"[!] manifest step: skip (manifest not text: {e}) -- decode without -r to enable")
