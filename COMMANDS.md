@@ -101,6 +101,22 @@ adb shell "$RUNAS 'cp -f /data/local/tmp/AutoHelper.dex a.dex; \
 | `CONST <class> <field>` / `DEVT <class>` | прочитать константу fid / deviceType |
 | `R/W/RX/WX/WA` | raw autoservice transact (Leopard3; на N9 НЕ актуирует) |
 
+### AC / свет / замки — через scenemodes (cameraautostudy их perm НЕ держит)
+Агент в cameraautostudy покрывает BODYWORK/INSTRUMENT/SETTING/POWER (окна/шторки/багажник/люк/сиденья/
+руль/кластер/SOC/свет-салона-через-SETTING). **AC/LIGHT/DOOR_LOCK_SET** у него нет, и ни один держатель
+не debuggable → инжект туда невозможен.
+
+Обход — **`com.byd.scenemodes`** (держит AC_SET+LIGHT_SET+DOOR_LOCK_SET): exported bound-сервис
+`com.byd.scenemodes.mind.sdk.SceneModeManagerServices` (action `byd.scenemodes.action.start`),
+`onBind = return stub` — **caller НЕ проверяется**. Яндекс (untrusted_app) биндит напрямую (Binder
+пересекает домены) и зовёт `ISceneModesService.execute(int action, Bundle{mode_type})` (tx=1):
+- action 0 — открыть сцену (UI), 4 — setModeState, 3/5 — open/status
+- mode_type: 10104=CAMPING (вентиляция+свет+замок), 10102=NAP (климат)
+- сервис применяет AC/свет/замок СВОИМ perm — signature-стена не при чём
+
+> ⚠️ верифицировано декомпилем (exported+ungated+actuation); live-тест из untrusted_app probe — pending
+> (точный mode/param-маппинг под конкретную команду «AC on» требует доразведки state-setter'ов).
+
 ### Панорама N9 = электро-шторки (не открывающийся люк!)
 `getMoonRoofConfig()=8 = CONFIG_FRONT_SUNSHADE_AND_REAR_SUNSHADE`. Стекло фиксированное, двигаются шторки.
 
