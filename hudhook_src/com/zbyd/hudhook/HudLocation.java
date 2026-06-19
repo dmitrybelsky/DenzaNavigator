@@ -32,6 +32,15 @@ public final class HudLocation {
     private static int sTick;
     private static double sTestLat, sTestLon;
 
+    // EXPERIMENTAL location-separation test (AR-HUD map). When on, we push a CHINA fix to the system test
+    // providers. launchermap (fused-only) follows it -> can build/navigate a China route -> AR-HUD 0x8003
+    // map subscription engages. Yandex MapKit runs a raw-GNSS spoofing detector (libmaps-mobile.so:
+    // location_spoofing_processor_reject_platform_lbs_near_spoofed_gps) so it REJECTS this contradicting
+    // mock and stays on the real raw-GNSS position. Net: launchermap=China, Yandex=real -> separation.
+    private static volatile boolean sMockChina;
+    private static final double BEIJING_LAT = 39.90840, BEIJING_LON = 116.40739;  // Tiananmen (AMap-covered)
+    public static void setMockChina(boolean v) { sMockChina = v; HudLog.f("HudLocation mockChina=" + v); }
+
     private static Context ctx() {
         try { return (Context) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null); }
         catch (Throwable t) { return null; }
@@ -90,12 +99,15 @@ public final class HudLocation {
     }
 
     private static void pushNow() {
-        if (!sHave || sLm == null) return;
+        if (sLm == null) return;
+        boolean china = sMockChina;
+        if (!sHave && !china) return;
+        double lat = china ? BEIJING_LAT : sLat, lon = china ? BEIJING_LON : sLon;   // China override wins over the car feed
         for (String p : PROVIDERS) {
             try {
                 Location l = new Location(p);
-                l.setLatitude(sLat); l.setLongitude(sLon); l.setAltitude(sAlt);
-                l.setAccuracy(sAcc); l.setBearing(sBearing); l.setSpeed(sSpeed);
+                l.setLatitude(lat); l.setLongitude(lon); l.setAltitude(sAlt);
+                l.setAccuracy(china ? 4f : sAcc); l.setBearing(sBearing); l.setSpeed(china ? 0f : sSpeed);
                 // per-quantity accuracies (API 26+) so MapKit weights our high-precision fix correctly
                 try { if (sVAcc > 0)     l.setVerticalAccuracyMeters(sVAcc); } catch (Throwable t) {}
                 try { if (sBearAcc > 0)  l.setBearingAccuracyDegrees(sBearAcc); } catch (Throwable t) {}
@@ -113,7 +125,9 @@ public final class HudLocation {
     }
     private static final Runnable FEED = new Runnable() {
         @Override public void run() {
-            if (sSelfTest) { sLat = sTestLat + (sTick++ * 0.00001); sLon = sTestLon; sBearing = 0f; sSpeed = 8f; sHave = true;
+            if (sMockChina) { sLat = BEIJING_LAT; sLon = BEIJING_LON; sAlt = 50.0; sAcc = 4f; sBearing = 0f; sSpeed = 0f; sHave = true;
+                              if (sTick++ % 25 == 0) HudLog.f("mockChina feed -> Beijing (launchermap follows; Yandex should reject as spoof)"); }
+            else if (sSelfTest) { sLat = sTestLat + (sTick++ * 0.00001); sLon = sTestLon; sBearing = 0f; sSpeed = 8f; sHave = true;
                              if (sTick % 25 == 0) HudLog.f("selfTest tick=" + sTick + " feed lat=" + sLat); }
             pushNow();
             if (sBg != null) sBg.postDelayed(this, 200L);

@@ -43,6 +43,7 @@ public final class HudFlagReceiver extends BroadcastReceiver {
             if (key == null || key.isEmpty()) { HudLog.f("FLAG broadcast: no key"); return; }
             boolean val = parseVal(it);
             HudFlags.set(ctx, key, val);                 // HudFlags.set persists to SharedPreferences
+            if ("mock_china".equals(key)) { try { HudLocation.setMockChina(val); } catch (Throwable t) {} }  // AR-HUD separation test
             HudLog.f("FLAG via broadcast " + key + "=" + val);
         } catch (Throwable t) { HudLog.f("FlagReceiver recv: " + t); }
     }
