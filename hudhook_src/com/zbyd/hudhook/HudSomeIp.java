@@ -71,6 +71,21 @@ public final class HudSomeIp {
         } catch (Throwable t) { return -200; } finally { r.recycle(); d.recycle(); }
     }
 
+    private static final java.util.HashSet<Long> sStartedSvcs = new java.util.HashSet<Long>();
+    /** Offer an arbitrary SOME/IP service (generic startSomeIpService). Idempotent per serviceId. */
+    private static synchronized void startSvc(long sid) {
+        IBinder b = sBinder; if (b == null || sStartedSvcs.contains(sid)) return;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(DESCRIPTOR); d.writeLong(sid);
+            b.transact(TX_START, d, r, 0); r.readException();
+            int rc = r.readInt(); if (rc == 0 || rc == 13) sStartedSvcs.add(sid);
+        } catch (Throwable t) {} finally { r.recycle(); d.recycle(); }
+    }
+
+    /** EXPERIMENTAL: offer <sid> + fireEvent(<topic>, payload). Used by HudAdasRoute (route injection). */
+    public static int pushEvent(long sid, long topic, byte[] payload) { startSvc(sid); return fire(topic, payload); }
+
     /** Publish one windshield HUD_ROAD_INFO frame (665): real Yandex position + route guideLine
      *  (AR arrows follow the actual route ahead) + road/dist/eta/maneuver. lat/lon are the live
      *  vehicle position; guideLine is the forward route polyline "[[lon,lat,0],...]" (null = synthetic). */

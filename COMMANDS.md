@@ -73,6 +73,39 @@ sleep 1; cat /sdcard/zbyd/res/t.res        # -> BODY setSunshadeState [100] ret=
 
 ---
 
+## 🧪 ADAS route-инъекция (ЭКСПЕРИМЕНТ, OFF по умолчанию)
+
+> ⚠️⚠️ **БЕЗОПАСНОСТЬ.** Подаёт роут из Яндекса на SOME/IP-топик, который читает нативный ADAS. Цель —
+> **L2 nav-ассист** (подсказки смены полосы/съезда идут по нашему роуту); руление остаётся в камера-вето
+> нативном ADAS, это НЕ команда рулём. **Только закрытая/пустая дорога, водитель контролирует, руки на
+> руле.** Не валидировано (нативный гейтинг producer/CRC) — может просто не сработать.
+
+**Что построено** (`HudAdasRoute`, флаг `HudFlags.ADAS_ROUTE`, default **false**):
+- Парсит AR-guideLine (полилиния маршрута Яндекса) → protobuf `naviSDRouteNotify` → `fireEvent` на
+  `NAVI_SD_ROUTE_NOTIFY` (topic 1126084593287170, сервис NAVIGATION_SD_LINK2 3096409430228992) тем же
+  no-perm ISomeIpServerInterface, что и HUD.
+
+**Включить (осознанно, на тест-дороге):**
+```bash
+# 1) убрать конфликт продюсера (Amap), иначе два источника одного топика:
+adb shell pm disable-user com.byd.launchermap          # вернуть: pm enable com.byd.launchermap
+# 2) включить флаг (SharedPreferences пересобранного Яндекса):
+adb shell "run-as ru.yandex.yandexnavi sh -c 'mkdir -p shared_prefs; cat > shared_prefs/zbyd_hud.xml <<EOF
+<?xml version=\"1.0\"?><map><boolean name=\"adas_route\" value=\"true\"/></map>
+EOF'"
+# 3) построить маршрут в Яндексе на пустой дороге, руки на руле.
+# выключить: value=\"false\" (или pm enable launchermap назад).
+```
+
+**Честные границы (research):**
+- **L2** (`autoType==210`, камера): HD-карта НЕ нужна; наш роут — подсказка, руление камерное. Инъекция
+  механически проходит, но примет ли нативный ADAS второго продюсера — неизвестно из Java.
+- **L3/NOA** (`autoType≠210`): **жёсткий HD-блокер** — нативный ADAS валидирует `pathID`/CRC/lane-id против
+  HD-карты в прошивке. Синтетический/Яндекс-роут проваливает нативную проверку. **L3 этим не включить.**
+- `CHANGE_LANE_DATA_NOTIFY` — это ВЫХОД ADAS (статус для UI), инъекция спуфит только дисплей, не команду.
+
+---
+
 ## ⚙️ Не-root запись в железо (N9, валидировано)
 
 N9 не рутован, Яндекс пересобран. Запись в авто-железо обходит signature-стену так:

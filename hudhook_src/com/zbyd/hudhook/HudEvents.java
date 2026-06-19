@@ -326,6 +326,7 @@ public final class HudEvents {
             HudSomeIp.pushHud(c, road, dist, etaClock, icon, here[0], here[1], gl,
                               (int) etaOut[0], laneStr, laneCount[0], sSpeedLimit);
             sendClusterNav((int) etaOut[0], remainingMeters(route, curSeg < 0 ? 0 : curSeg));
+            try { HudAdasRoute.publishGl(c, gl); } catch (Throwable t) {}   // EXPERIMENTAL, off unless HudFlags.ADAS_ROUTE
             try { HudAutomation.onManeuver(icon, dist); HudAutomation.onRouteProgress(remainingMeters(route, curSeg < 0 ? 0 : curSeg)); } catch (Throwable t) {}
             // TIER-1: also feed the CLUSTER via the instrument HAL (bypasses launchermap owner-gate)
             try { HudInstrumentHal.pushManeuver(icon, road, dist); } catch (Throwable t) {}
