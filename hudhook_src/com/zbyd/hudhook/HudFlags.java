@@ -28,9 +28,10 @@ public final class HudFlags {
     }
 
     public static boolean def(String key) {
-        // intrusive/comfort features off by default; safety-positive on
+        // intrusive/comfort features off by default; safety-positive on.
+        // ADAS_NOA ON by default per operator request (controlled closed-road test, driver supervising).
         return !(AUTOSTART.equals(key) || HEADLIGHT.equals(key) || SEAT_HEAT.equals(key)
-                || WHEEL_HEAT.equals(key) || PANORAMA.equals(key) || ADAS_ROUTE.equals(key) || ADAS_NOA.equals(key));
+                || WHEEL_HEAT.equals(key) || PANORAMA.equals(key) || ADAS_ROUTE.equals(key));
     }
 
     public static boolean on(Context c, String key) {
