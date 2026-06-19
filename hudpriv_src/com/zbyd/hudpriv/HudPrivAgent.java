@@ -156,6 +156,13 @@ public final class HudPrivAgent {
                 int dt = devType(dev);
                 Method g = findMethod(dev.getClass(), "get", int.class, int.class);
                 logN("RGET ret=" + g.invoke(dev, dt, parseFid(p[2])));
+            } else if ("HUDMAP".equals(cmd)) {                          // HUDMAP <0|1> — ICarHudManager.setNavigationMapEnabled (AR-HUD map element)
+                boolean on = "1".equals(p[1]) || "true".equalsIgnoreCase(p[1]);
+                Class<?> mgrCls = Class.forName("com.byd.car.feature.vision.ICarHudManager");
+                Object mgr = Class.forName("com.byd.car.DiCar")
+                        .getMethod("getCarManager", Context.class, Class.class).invoke(null, ctx, mgrCls);
+                Object st = mgrCls.getMethod("setNavigationMapEnabled", boolean.class).invoke(mgr, on);
+                logN("HUDMAP on=" + on + " -> " + st);
             }
         } catch (Throwable e) { log("dispatch fail [" + line + "]: " + e); lastReply = "ERR " + e; }
     }
