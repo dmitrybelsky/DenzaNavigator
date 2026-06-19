@@ -17,18 +17,26 @@ import org.json.JSONObject;
  * threading those waypoints (valid link IDs) and publishes it to the ADAS, which runs NOA along it. With
  * dense waypoints the Amap route hugs the Yandex polyline (where Amap has HD coverage).
  *
- * Deep-link format reversed from launchermap k/k/c/z/m1.java (host "route", param "data" = JSON):
- *   bydautomap://route?data={"coordinateType":<int>,
+ * Format VERIFIED against the BYD producer NaviProxy.startNavigation (com.byd.nfvc) and consumer parser
+ * launchermap k/k/c/z/m1.java (host "route", scheme "bydautomap", manifest-registered, exported MainActivity):
+ *   bydautomap://route?sourceApplication=<pkg>&data={"coordinateType":<int>,
  *                            "destination":{"name":..,"latitude":..,"longitude":..},
  *                            "waypoints":[{"name":..,"latitude":..,"longitude":..}, ...]}
+ * Producer builds it as raw concat + Uri.parse; we Uri.encode the JSON (parser getQueryParameter decodes) so
+ * stray &/#/space in names can't break the URI. Keys "latitude"/"longitude" confirmed (TrackReportField).
+ *
+ * coordinateType consumer (m1.v): ==2 -> WGS84->GCJ02 add-offset, ==3 -> BD09, else -> NO transform (verbatim).
+ * Coord.transformWGS84ToGCJ02 has an out-of-China guard (returns 0 offset when lon<72.004|>137.83 or lat<0.83|>55.83),
+ * so in Russia 1 and 2 are identical (offset=0). We send 1 (no-transform) — Yandex WGS84 used verbatim, correct.
  *
  * ⚠️ Route geometry is still Amap's (snaps each waypoint to its nearest HD road). NOA does the camera/radar-
- * vetoed driving. coordinateType (WGS84 vs GCJ02) — verify live. Closed/empty road, driver supervising.
+ * vetoed driving. Closed/empty road, driver supervising.
  */
 public final class HudNoa {
 
     private static final String PKG = "com.byd.launchermap";
-    private static final int COORD_WGS84 = 1;          // coordinateType — N9 outside China is WGS84 (verify live)
+    private static final String SRC_APP = "com.yandex.zbyd";  // sourceApplication attribution (producer sets caller pkg)
+    private static final int COORD_NATIVE = 1;          // coordinateType: !=2,!=3 -> no transform (Russia: GCJ02==WGS84)
     private static final int MAX_WAYPOINTS = 16;        // cap so the URI stays sane + Amap accepts it
     private static long sLast;
 
@@ -41,7 +49,7 @@ public final class HudNoa {
             java.util.ArrayList<double[]> pts = parse(gl);
             int n = pts.size(); if (n < 2) return;
             JSONObject data = new JSONObject();
-            data.put("coordinateType", COORD_WGS84);
+            data.put("coordinateType", COORD_NATIVE);
             double[] end = pts.get(n - 1);
             data.put("destination", poi(dest == null ? "Destination" : dest, end[0], end[1]));
             JSONArray wp = new JSONArray();
@@ -52,7 +60,8 @@ public final class HudNoa {
                 if (wp.length() >= MAX_WAYPOINTS) break;
             }
             data.put("waypoints", wp);
-            String uri = "bydautomap://route?data=" + Uri.encode(data.toString());
+            String uri = "bydautomap://route?sourceApplication=" + Uri.encode(SRC_APP)
+                       + "&data=" + Uri.encode(data.toString());
             Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(PKG)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(it);
